@@ -1,0 +1,65 @@
+2017-08-02 Qipeng Hu <qhu@cern.ch>
+	* fix bug with centrality division in HICentralityTool for 2016 p+Pb runs
+	* Tagging as HIEventUtils-00-00-21
+
+2017-08-01 Qipeng Hu <qhu@cern.ch>
+	* update HICentralityTool to support 2016 p+Pb runs
+	* fix bugs of missing HICentralityTool.h in HIEventUtils-00-00-18
+	* Tagging as HIEventUtils-00-00-19
+
+2017-08-01 Qipeng Hu <qhu@cern.ch>
+	* adding HICentralityTool
+	* Tagging as HIEventUtils-00-00-18
+
+2017-05-10 Aaron Angerami <angerami@cern.ch>
+	* adding HITowerWeightTool
+	* Tagging as HIEventUtils-00-00-16
+	
+2016-11-04 Sebastian Tapia  <s.tapia@cern.ch>
+	* changes in Event Selection to add pileup rejection
+	* adding HIPileup.cxx, HIPileup.h and IHIPileup.h
+	* adding file HIRun2PileUp_PbPb5p02_v2.root needed by pileup tool 
+	* Tagging as HIEventUtils-00-00-15
+
+2016-07-01 Sebastian Tapia  <s.tapia@cern.ch>
+	* changes in Event and Vertex Selection to match Centrality cuts
+	* RC test of HIEventSelection added in util/ 
+	* Tagging as HIEventUtils-00-00-14
+
+2016-06-27 Aaron Angerami <angerami@cern.ch>
+	* fix HIEventShapeIndex to allow for single layer
+	* Tagging as HIEventUtils-00-00-13
+
+
+2016-01-30 Felix Clark <michael.ryan.clark@cern.ch>
+	* Adding missing include guard to vertex tool testing util
+	* Taggng as HIEventUtils-00-00-12
+
+2016-01-29 Felix Clark <michael.ryan.clark@cern.ch>
+	* NB: some changes from Peter and Aaron were already in the trunk
+	* implementing Ntrk and sum pt^2 cuts
+	* adding Rootcore utility to test vertex tool
+	* Tagging as HIEventUtils-00-00-11
+
+2016-01-20 Felix Clark <michael.ryan.clark@cern.ch>
+	* add HIVertexSelectionTool
+	* gave the vertex selection tool a dual-use ToolHandle to a track selection tool
+	* Tagging as HIEventUtils-00-00-10
+
+2015-10-26 Aaron Angerami <angerami@cern.ch>
+	* fix flow modulation harmonic index bug, RC compilation issues
+	* Tagging as HIEventUtils-00-00-09
+2015-10-26 Aaron Angerami <angerami@cern.ch>
+	* fix range error problem reported in ATR-12267
+	* Tagging as HIEventUtils-00-00-08
+2015-09-10 Aaron Angerami <angerami@cern.ch>
+	* mods to match with function name changes in EDM (xAODHIEvent-00-00-09)
+	* Tagging as HIEventUtils-00-00-07
+
+2015-04-11	Aaron Angerami <angerami@cern.ch>
+	* mods HIEventShapeSummaryTool and renaming HIEventShapeSummary -> HIEventShapeSummaryUtils
+	* tag HIEventUtils-00-00-04
+2015-04-07	Aaron Angerami <angerami@cern.ch>
+	* Creating ChangeLog
+	* mods adding index and summary functionality
+	* tag HIEventUtils-00-00-03

@@ -1,0 +1,126 @@
+#! /usr/bin/env python
+from XAMPPbase.runSUSYAnalysis import *
+
+# add additional arguments to the argument parser of XAMPPbase.runSUSYAnalysis
+def setupJVTArgParser(parser):
+    
+    parser = setupSUSYArgParser(parser)
+
+    parser.set_defaults(noJets=False)
+    parser.set_defaults(noBtag=True)
+    parser.set_defaults(noElectrons=False)
+    parser.set_defaults(noMuons=False)
+    parser.set_defaults(noTaus=True)
+    parser.set_defaults(noPhotons=True)
+    parser.set_defaults(analysis='JVT')
+    parser.set_defaults(STConfig='XAMPPanalyses/SUSYTools_JVT.conf')
+    
+    return parser
+
+
+#####
+# JVT analysis run script
+#####
+if __name__ == "__main__":
+    
+    import ROOT
+    
+    parser = argparse.ArgumentParser(description='This script starts the analysis code. For more help type \"python SUSYFwMPI/util/runJVT.py -h\"', prog='runJVT')
+    
+    RunOptions = setupJVTArgParser(parser).parse_args()
+    
+    CutFlowsToRun = ['JVT_2L']
+
+    start_time = prepareAnalysis(ROOT)
+    
+    # create a new analysis helper instance
+    logging.info("creating AnalysisHelper algorithm")
+    AnalysisHelp = ROOT.XAMPP.JVTAnalysisHelper("AnalysisHelper")
+    
+    
+    
+    # create an analysis configuration with a name which is the suffix of the output trees 
+    JobConfig = ROOT.XAMPP.JVTAnalysisConfig('JVT')
+    
+    # the name of the AnalysisConfig has to be parsed to the AnalysisHelper 
+    setASGProperty(AnalysisHelp, 'std::string', 'AnalysisConfigName', 'JVT')
+    
+    # create and add object selectors
+    AnalysisHelp.SUSYElectronSelector = ROOT.XAMPP.SUSYElectronSelector("SUSYElectronSelector")
+#    setASGProperty(AnalysisHelp.SUSYElectronSelector,'bool','SeparateSF',True)
+    setASGProperty(AnalysisHelp.SUSYElectronSelector,'bool','ApplyTriggerSF',False)
+    
+    AnalysisHelp.SUSYMuonSelector = ROOT.XAMPP.SUSYMuonSelector("SUSYMuonSelector")
+#     setASGProperty(AnalysisHelp.SUSYMuonSelector,'bool','SeparateSF',True)
+   
+    AnalysisHelp.SUSYJetSelector = ROOT.XAMPP.SUSYJetSelector("SUSYJetSelector")
+    #setASGProperty(AnalysisHelp.SUSYJetSelector,'float','bJetEtaCut',2.5)
+    setASGProperty(AnalysisHelp.SUSYJetSelector,'bool','SeparateSF',True)
+    
+    AnalysisHelp.SUSYTauSelector = ROOT.XAMPP.SUSYTauSelector("SUSYTauSelector")
+
+    AnalysisHelp.SUSYPhotonSelector = ROOT.XAMPP.SUSYPhotonSelector("SUSYPhotonSelector")
+
+    AnalysisHelp.SUSYMetSelector = ROOT.XAMPP.Stop0LMetSelector("SUSYMetSelector")
+    setASGProperty(AnalysisHelp.SUSYMetSelector, 'bool', 'DoTrackMet', False)
+    setASGProperty(AnalysisHelp.SUSYMetSelector, 'bool', 'IncludeTaus', False)
+    setASGProperty(AnalysisHelp.SUSYMetSelector, 'bool', 'IncludePhotons', False)
+
+    # create and add systematics and trigger tools
+    SystematicsTool = ROOT.XAMPP.SUSYSystematics("SystematicsTool")  
+    
+    AnalysisHelp.SUSYSystematics = SystematicsTool
+    
+    AnalysisHelp.TriggerTool = ROOT.XAMPP.SUSYTriggerTool("TriggerTool")
+    setASGProperty(AnalysisHelp.TriggerTool, 'int', 'OfflineThreshold', 2000) # set the offline trigger pt threshold to 2GeV for leptons
+    setASGProperty(AnalysisHelp.TriggerTool, 'bool', 'WritePrescaling', False)
+    setASGProperty(AnalysisHelp.TriggerTool, 'bool', 'StoreMatchingInfo', False) 
+    SingleLepTriggers = [
+    	"HLT_mu15_L1MU10",
+    	"HLT_mu15_L1MU6",
+    	"HLT_2mu4",    
+        "HLT_mu20_iloose_L1MU15", # used by Stop0L 2015 2LCR (mumu) cutflow comparison   
+        "HLT_mu60_0eta105_msonly",
+        "HLT_mu50", # used by Stop0L 2015/2016 2LCR (mumu) cutflow comparison
+        "HLT_mu26_imedium", # used by Stop0L 2016 2LCR (mumu) cutflow comparison
+        "HLT_mu24_iloose_L1MU15",
+        "HLT_mu40",
+        "HLT_mu24_ivarmedium",
+        "HLT_mu24_iloose",
+        "HLT_mu24_ivarloose",
+        "HLT_mu24_ivarloose_L1MU15",
+        "HLT_mu24_imedium",
+        "HLT_mu26_ivarmedium"
+    ]        
+ 
+    # this does not work yet:
+#     setASGProperty(TriggerTool,'std::vector< string >','1LeptonTriggers',createStdVecStr(ROOT,SingleLepTriggers))
+    # therefore use one single string:
+    setASGProperty( AnalysisHelp.TriggerTool, 'std::string', '1LeptonTriggersString', ",".join(SingleLepTriggers))
+
+    if not RunOptions.isData:
+        AnalysisHelp.SUSYTruthSelector = ROOT.XAMPP.SUSYTruthSelector("SUSYTruthSelector")
+        #setASGProperty(AnalysisHelp.SUSYTruthSelector, 'double', 'TruthBJetPtCut', 20000.)
+        #setASGProperty(AnalysisHelp.SUSYTruthSelector, 'double', 'TruthBJetEtaCut', 2.5)
+        setASGProperty(AnalysisHelp.SUSYTruthSelector, 'float', 'TruthBaselineJetPtCut', 4000.)
+        setASGProperty(AnalysisHelp.SUSYTruthSelector, 'float', 'TruthBaselineJetEtaCut', 2.8)
+        #setASGProperty(AnalysisHelp.SUSYTruthSelector, 'float', 'TruthSignalJetPtCut', 20000.)
+        #setASGProperty(AnalysisHelp.SUSYTruthSelector, 'float', 'TruthSignalJetEtaCut', 2.5)
+        #setASGProperty(AnalysisHelp.SUSYTruthSelector, 'double', 'TruthJetPtCut', 4000.)
+        #setASGProperty(AnalysisHelp.SUSYTruthSelector, 'double', 'TruthJetEtaCut', 2.8)
+        setASGProperty(AnalysisHelp.SUSYTruthSelector, 'bool', 'doJets', True)
+        setASGProperty(AnalysisHelp.SUSYTruthSelector, 'bool', 'doTruthParticles', True)
+
+    
+    setupSUSYAnalysis(RunOptions, JobConfig, AnalysisHelp, SystematicsTool)
+    
+    # create a new analysis loop instance
+    logging.info("setting up the loop algorithm")
+    AnaLoop = ROOT.XAMPP.xAODLoop("xAODLoop")
+    AnaLoop.SUSYAnalysisHelper = AnalysisHelp
+
+    runAnalysisLoop(RunOptions, AnaLoop)
+
+
+    finalizeAnalysis(start_time, AnalysisHelp)
+    

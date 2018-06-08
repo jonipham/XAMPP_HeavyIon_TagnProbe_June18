@@ -1,0 +1,6 @@
+*.root.1
+*.so
+*.o
+*.pyc
+RootCoreBin/
+data16_13TeV/

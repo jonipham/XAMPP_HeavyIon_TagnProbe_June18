@@ -1,0 +1,98 @@
+2016-12-22 Nicolas Koehler <nkoehler@CERN.CH>
+    * working in Base,2.4.23 onwards
+    * stop0L prw handling: SM MC: dev/SUSYTools, Signal MC: dev/PileupReweighting
+
+2016-12-12 Nicolas Koehler <nkoehler@CERN.CH>
+    * Tagging XAMPPanalyses-00-00-09 before moving to git
+
+2016-11-18 Nicolas Koehler <nkoehler@CERN.CH>
+    * Tagging XAMPPanalyses-00-00-08 used for 16K3 production
+
+2016-11-18 Nicolas Koehler <nkoehler@CERN.CH>
+    * Adapted new cutflow class
+    
+2016-11-17 Nicolas Koehler <nkoehler@CERN.CH>
+    * Added mt2 calculation for Stop0L
+
+2016-11-09 Nicolas Koehler <nkoehler@CERN.CH>
+    * Updated to AnalysisBase,2.4.21
+    * Added IsMETTrigPassed for stop0L
+
+2016-11-02 Nicolas Koehler <nkoehler@CERN.CH>
+    * Moved to new tree handling
+
+2016-09-27 Nicolas Koehler <nkoehler@CERN.CH>
+    * Tagging XAMPPanalyses-00-00-06 used for Stop0L 16I1 production
+
+2016-06-27 Nicolas Koehler <nkoehler@CERN.CH>
+    * Tagging XAMPPanalyses-00-00-05 used for Stop0L 16F3 production
+
+2016-06-21 Francesca Ungaro <francesca.ungaro@CERN.CH>
+    * Implemented Truth stop 0 lepton analysis
+
+2016-06-19 Nicolas Koehler <nkoehler@CERN.CH>
+    * Implemented gamma CR cutflow
+
+2016-06-14 Claudia Giuliani <claudia.giuliani@CERN.CH>
+    * Adding functionality to retrieve jet resolution to use for significance variables
+
+2016-05-29 Nicolas Koehler <nkoehler@CERN.CH>
+    * Tagging XAMPPanalyses-00-00-04 for usage with XAMPPbase-00-00-03 (used
+    in AnalysisSUSY,2.3.45 (Stop0L CONF note FAR) 
+
+2016-05-05 Francesca Ungaro <francesca.ungaro@CERN.CH>
+    * Added skeleton of JVT analysis
+
+2016-04-19 Nicolas Koehler <nkoehler@CERN.CH>
+    * Copied branch-00-00-01 into trunk
+
+2016-04-18 Nicolas Koehler <nkoehler@CERN.CH>
+    * Included everything into XAMPP namespace
+    
+2016-04-07 Nicolas Koehler <nkoehler@CERN.CH>
+    * removed MtLepMet cut in dump 1L region
+    * Preparing for tagging XAMPPanalyses-00-00-02 used for 16D4 stop0L grid production
+
+2016-04-04 Nicolas Koehler <nkoehler@CERN.CH>
+    * added MtBMax variable etc.
+    * overwrite UpdateParticleTrees method in Stop0LTree
+    * Preparing for tagging XAMPPanalyses-00-00-01 used for 16D2 stop0L grid production
+
+2016-04-03 Nicolas Koehler <nkoehler@CERN.CH>
+    * Preparing for tagging XAMPPanalyses-00-00-00 used for 16D1 stop0L grid production
+
+2016-01-31 Nicolas Koehler <nkoehler@CERN.CH>
+    * Added GenFiltMET cut for inclusive ttbar and single top samples
+    * Added bjet char to stop0L output tree
+    * Added AsymmetryMTop to stop0L output tree
+    * Added stop0L batch submit script
+
+2016-03-23 Francesca Ungaro <francesca.ungaro@CERN.CH>
+    * Added calls to GetTopCandidatesDRB4 and GetTopCandidatesMinMass in Dtop0LAnalysisHelper (alternative top reconstruction methods)
+	
+2016-02-09 Francesca Ungaro <francesca.ungaro@cern.ch>
+    * Added DMbbAnalysisHelper
+
+2016-01-29 Francesca Ungaro <francesca.ungaro@cern.ch>
+    * Added DMbb analysis: new DMbbHisto and DMbbTree. Analysis helper and .conf file in common with Stop0L analysis
+	
+2016-01-27 Nicolas Koehler <nkoehler@CERN.CH>
+    * Cleaned up systematics handling
+    * Using const CP::SystematicSet* everywhere
+    * Fixed memory issue
+
+2016-01-25 Nicolas Koehler <nkoehler@CERN.CH>
+    * migrated ParticleSelector to SUSYSelectorTools
+    * optimized systematics treatment using CP::SystematicSet*
+
+2016-01-25 Claudia Giuliani <claudia.giuliani@CERN.CH>
+    * Many updates to MetSignif classes. It is possible to retrieve CP tools to get objects resolutions
+    * Cleaned AnalysisHelper classes; initialize/finalizeOutputs and Histo and Tree Dumps done in XAMPPbase/SUSYAnalysisHelper
+    * Added functions CreateHistoClass and CreateTreeClass to the AnalysisHelper classes
+
+2016-01-24 Nicolas Koehler <nkoehler@CERN.CH>
+    * Fixed setProperty in python run scripts
+
+2016-01-20 Claudia Giuliani <claudia.giuliani@CERN.CH>
+    * First version of the package
+    * Implemented analyses: Stop0L and MetSignif

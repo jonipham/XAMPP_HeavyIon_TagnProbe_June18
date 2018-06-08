@@ -1,0 +1,419 @@
+#include <xAODRootAccess/Init.h>
+#include <xAODRootAccess/TEvent.h>
+#include <xAODRootAccess/TStore.h>
+
+#include <xAODMetaData/FileMetaData.h>
+#include <xAODLuminosity/LumiBlockRangeContainer.h>
+
+//XAMPP includes
+#include <XAMPPbase/IAnalysisHelper.h>
+#include <XAMPPbase/AnalysisUtils.h>
+#include <XAMPPbase/ISystematics.h>
+#include <XAMPPbase/xAODLoop.h>
+
+#include <TStopwatch.h>
+#include <dirent.h>
+#include <stdexcept> 
+
+//---------------------
+// AsgTools Messages to use inside IAsgTools:
+//---------
+// ATH_MSG_VERBOSE(x) ATH_MSG_LVL(MSG::VERBOSE, x)
+// ATH_MSG_DEBUG(x)   ATH_MSG_LVL(MSG::DEBUG, x)
+// ATH_MSG_INFO(x)    ATH_MSG_LVL_NOCHK(MSG::INFO, x)
+// ATH_MSG_WARNING(x) ATH_MSG_LVL_NOCHK(MSG::WARNING, x)
+// ATH_MSG_ERROR(x)   ATH_MSG_LVL_NOCHK(MSG::ERROR,  x)
+// ATH_MSG_FATAL(x)   ATH_MSG_LVL_NOCHK(MSG::FATAL,  x)
+// ATH_MSG_ALWAYS(x)  ATH_MSG_LVL_NOCHK(MSG::ALWAYS, x)
+//from http://acode-browser2.usatlas.bnl.gov/lxr-rel20/source/atlas/Control/AthenaCommon/python/Constants.py
+//ALL     = 0
+//VERBOSE = 1
+//DEBUG   = 2
+//INFO    = 3
+//WARNING = 4
+//ERROR   = 5
+//FATAL   = 6
+//---------------------
+
+__attribute__((constructor))
+static void initializer(void) {
+    printf("\n" "\x1b[32m"); //ANSI_COLOR_GREEN
+    printf("XAMPPbase");
+    printf(" v");
+    printf("1.0.0");
+    printf(" -- xAOD analysis code from MPP Munich\n");
+    printf("                    ");
+    printf("Developed by Johannes Junggeburth (jojungge@cern.ch)\n");
+    printf("                    ");
+    printf("and Nicolas Koehler (nkoehler@cern.ch)\n");
+    printf("                    ");
+    printf("Copyright (c) 2016-2017, GNU General Public License\n");
+    printf("                    ");
+    printf("http://mpp.mpg.de\n\n");
+    printf("\x1b[0m" "\n"); //color reset
+}
+
+
+namespace XAMPP {
+#ifdef XAOD_STANDALONE
+
+    xAODLoop::xAODLoop(std::string myname) :
+                AsgMetadataTool(myname),
+                m_systematics("SystematicsTool"),
+                m_helper("AnalysisHelper"),
+                m_RunCutFlow(true),
+                m_output_level(MSG::INFO),
+                m_printInterval(1000),
+                m_isPrimaryAOD(false),
+                m_InFileName(""),
+                m_SkipEvents(0),
+                m_MaxEvents(0),
+                m_RunType(RunType::Batch),
+                m_printProgress(true),
+                m_init_LoadFirstEv(false),
+                m_InFile(NULL),
+                m_GotFileMetaData(false),
+                m_init(false),
+                m_inputFiles(),
+                m_event(0),
+                m_store(0),
+                m_totEntries(0),
+                m_totSyst(0),
+                m_ConstEvtInfo() {
+        declareProperty("SystematicsTool", m_systematics);
+        declareProperty("SUSYAnalysisHelper", m_helper);
+        declareProperty("OutputLevel", m_output_level);
+        declareProperty("PrintInterval", m_printInterval);
+        declareProperty("InFile", m_InFileName);
+        declareProperty("SkipEvents", m_SkipEvents);
+        declareProperty("MaxEvents", m_MaxEvents);
+        declareProperty("RunType", m_RunType);
+        declareProperty("IsPrimaryAOD", m_isPrimaryAOD);
+        declareProperty("PrintProgress", m_printProgress);
+        declareProperty("InitWithFirstEvent", m_init_LoadFirstEv);
+        declareProperty("RunCutFlow", m_RunCutFlow);
+    }
+
+    xAODLoop::~xAODLoop() {
+        if (m_event) delete m_event;
+        if (m_store) delete m_store;
+        CloseFile();
+    }
+        bool xAODLoop::isData()const{
+            return m_systematics->isData();
+        }
+
+    StatusCode xAODLoop::beginInputFile() {
+        if (m_GotFileMetaData) return StatusCode::SUCCESS;
+        asg::AsgTool* Helper = dynamic_cast<asg::AsgTool*>(m_helper.operator->());
+        asg::AsgTool* Syst = dynamic_cast<asg::AsgTool*>(m_systematics.operator->());
+        bool foundLBContainer = false;
+        if (inputMetaStore()->contains < xAOD::LumiBlockRangeContainer > ("LumiBlocks") || inputMetaStore()->contains < xAOD::LumiBlockRangeContainer > ("IncompleteLumiBlocks")) {
+            if (!isData()) ATH_MSG_INFO("Found LumiBlockRangeContainer container although 'isData' property was set to 'false', setting it to 'true' now...");
+            ATH_CHECK(Syst->setProperty("doSyst", false));
+            ATH_CHECK(Syst->setProperty("doWeights", false));
+            ATH_CHECK(Syst->setProperty("isData", true));
+            foundLBContainer = true;
+        } else if (isData()) {
+#if ROOTCORE_RELEASE_SERIES == 24
+            ATH_MSG_WARNING("The 'isData' property was set to 'true', but you are running on MC, setting it to 'false' now...");
+            ATH_CHECK(Syst->setProperty("isData", false));
+#endif
+        }
+        if (!foundLBContainer && !isData()) {
+            if (inputMetaStore()->contains < xAOD::FileMetaData > ("FileMetaData")) {
+                const xAOD::FileMetaData* metaData;
+                ATH_CHECK(inputMetaStore()->retrieve(metaData, "FileMetaData"));
+                std::string simFlavour;
+                if (metaData->value(xAOD::FileMetaData::MetaDataType::simFlavour, simFlavour)) {
+                    std::cout << "Yeah, finally the simFlavour is there: " << simFlavour << std::endl;
+                    if (simFlavour.find("AF2") != std::string::npos) ATH_CHECK(Helper->setProperty("isAF2", true));
+                    else ATH_CHECK(Helper->setProperty("isAF2", false));
+                }
+            }
+        }
+        m_GotFileMetaData = true;
+        return StatusCode::SUCCESS;
+    }
+    StatusCode xAODLoop::initialize() {
+        if (m_init) return StatusCode::SUCCESS;
+        ATH_MSG_INFO("Initializing...");
+        m_event = new xAOD::TEvent(m_isPrimaryAOD ? xAOD::TEvent::kAthenaAccess : xAOD::TEvent::kClassAccess);
+        m_store = new xAOD::TStore();
+        xAOD::TEvent* event = dynamic_cast< xAOD::TEvent* >( xAOD::TActiveEvent::event() );
+        if( !event || event->addListener( this ).isFailure() ) {
+            ATH_MSG_FATAL( "Could not register myself with the TEvent" );
+            return StatusCode::FAILURE;
+        }
+        if (m_isPrimaryAOD) ATH_MSG_INFO("The input file type is a primaryxAOD. Activating kAthenaAccess leading to higher processing times");
+        else ATH_MSG_INFO("Assuming the input file is a DAOD. Activating kClassAccess");
+        ATH_CHECK(BuildFileLists());
+        ATH_MSG_DEBUG("Initialize the analysis helper class");
+        ATH_CHECK(m_helper.retrieve());
+        ATH_CHECK(m_systematics.retrieve());
+        ATH_MSG_DEBUG("The analysis helper must be initialized by the loop, it then will initialize the systematics tool.");
+        ATH_CHECK(m_helper->initialize());
+        m_totSyst = m_systematics->GetKinematicSystematics().size();
+        if (m_totSyst == 0) {
+            ATH_MSG_FATAL("Have not found any iteration to run on, exiting...!");
+            return StatusCode::FAILURE;
+        }
+        ATH_MSG_INFO("Running on a total number of systematic uncertainties of " << m_systematics->GetAllSystematics().size() << " where " << m_totSyst << " affect the kinematics (including nominal).");
+
+        this->msg().setLevel(XAMPP::setOutputLevel(m_output_level));
+        m_init = true;
+        return StatusCode::SUCCESS;
+    }
+
+    StatusCode xAODLoop::ExecuteLoop() {
+        Long64_t jentry = 0;
+        Long64_t SkipEvents = m_SkipEvents;
+        if (SkipEvents > 0) ATH_MSG_WARNING("Skipping the first " << SkipEvents << " events!");
+        Long64_t TotEntries = m_totEntries;
+        TStopwatch tsw;
+        tsw.Start();
+        double t2 = 0;
+        signal(SIGINT, SignalHandler);
+        // Use a TStopwatch for simple performance monitoring
+        ATH_MSG_INFO(" ===== STARTING LOOPING OVER EVENTS ===========");
+        if (m_MaxEvents > 0 && (m_MaxEvents + SkipEvents) < m_totEntries) {
+            TotEntries = SkipEvents + m_MaxEvents;
+            ATH_MSG_WARNING("Running only on " << TotEntries - SkipEvents << " entries out of " << m_totEntries);
+        } else ATH_MSG_INFO("Running on complete sample: " << TotEntries << " entries");
+
+        if ((m_printInterval == 1000) && (TotEntries <= 100)) m_printInterval = int(1.);
+        else if ((m_printInterval == 1000) && (TotEntries <= 1000)) m_printInterval = int(TotEntries / 10.);
+
+        //Looping over the input files
+        for (const auto& F : m_inputFiles) {
+            ATH_CHECK(LoadFile(F));
+            //Skip Entries functions
+            if (m_event->getEntries() < SkipEvents) {
+                SkipEvents -= m_event->getEntries();
+                jentry += m_event->getEntries();
+                ATH_MSG_INFO("File " << F << " has less events than to skip... Events left to skip " << SkipEvents);
+                continue;
+            }
+            jentry += SkipEvents;
+            Long64_t iMax = m_event->getEntries();
+            if (TotEntries + SkipEvents < jentry + iMax) {
+                ATH_MSG_DEBUG("Set maximum events for file from " << iMax << " to " << TotEntries - jentry);
+                iMax = SkipEvents + TotEntries - jentry;
+                if (iMax == 0) {
+                    break;
+                }
+            }
+            for (Long64_t i = SkipEvents; i < iMax; ++i) {
+                m_event->getEntry(i);
+                ATH_MSG_DEBUG("\n#######################\nStarting running on entry " << jentry);
+                ATH_CHECK(RetrieveEventInfo());
+                ATH_CHECK(ExecuteEvent());
+                ATH_CHECK(CheckCutflow());
+                ATH_MSG_DEBUG("calling evtStore()->tds()->clear()");
+                evtStore()->tds()->clear();
+                if (m_printProgress && jentry % m_printInterval == 0) {
+                    t2 = tsw.RealTime();
+                    std::cout << "Entry " << jentry << " / " << TotEntries << " (" << std::setprecision(2) << (float) jentry / (float) TotEntries * 100. << "%)" << std::setprecision(6) << " @ " << TimeHMS(t2);
+                    std::cout << ". Physics Event Rate: " << std::setprecision(3) << jentry / t2 << " Hz, Computing Event Rate: " << std::setprecision(3) << jentry * m_totSyst / t2 << " Hz, E.T.A.: " << TimeHMS(t2 * ((float) TotEntries / (float) jentry - 1.)) << " (updating screen each " << m_printInterval << " events)                           " << std::flush << '\r' << std::flush;
+                    tsw.Continue();
+                }
+                ++jentry;
+            }
+            SkipEvents = 0;
+            if (m_printProgress) std::cout << std::endl << std::endl;
+        }
+        return StatusCode::SUCCESS;
+    }
+    StatusCode xAODLoop::LoadFile(const std::string & filename) {
+        CloseFile();
+        ATH_MSG_DEBUG("Open file: " << filename);
+        m_InFile = TFile::Open(filename.c_str(), "READ");
+        //Ask if the input file could be read by the xAOD
+        if (!m_InFile || !m_InFile->IsOpen()) {
+            ATH_MSG_ERROR("Could not open "<<filename);
+            CloseFile();
+            return StatusCode::FAILURE;
+        }
+        if (!m_event->readFrom(m_InFile).isSuccess()) {
+            ATH_MSG_ERROR("Could not initialize file " << filename);
+            CloseFile();
+            return StatusCode::FAILURE;
+        }
+        return StatusCode::SUCCESS;
+    }
+
+    void xAODLoop::CloseFile() {
+        if (m_InFile) {
+            m_InFile->Close();
+            delete m_InFile;
+            m_InFile = NULL;
+        }
+    }
+    StatusCode xAODLoop::finalize() {
+        ATH_CHECK(m_helper->finalize());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode xAODLoop::beginEvent() {
+        return StatusCode::SUCCESS;
+    }
+    StatusCode xAODLoop::ExecuteEvent() {
+        ATH_MSG_DEBUG("Call beginEvent...");
+        ATH_CHECK(m_helper->LoadContainers());
+        ATH_MSG_DEBUG("ExecuteEvent()....");
+        if (!m_helper->AcceptEvent()) {
+            ATH_MSG_DEBUG("The event is discarded by the AnalysisHelper");
+            return StatusCode::SUCCESS;
+        }
+
+        ATH_MSG_DEBUG("Check event cleaning...");
+        if (!m_helper->EventCleaning()) {
+            ATH_MSG_DEBUG("Event Failed the cleaning");
+            return StatusCode::SUCCESS;
+        }
+        ATH_MSG_DEBUG("Check trigger...");
+        if (!m_helper->CheckTrigger()) {
+            ATH_MSG_DEBUG("Trigger failed");
+            return StatusCode::SUCCESS;
+        }
+        for (const auto& current_syst : m_systematics->GetKinematicSystematics()) {
+            ATH_MSG_DEBUG("Running kinematic systematic: " << current_syst->name() << ".");
+            ATH_CHECK(m_systematics->resetSystematics());
+            ATH_CHECK(m_systematics->setSystematic(current_syst));
+            ATH_MSG_DEBUG("FillInitialObjects: ");
+            if (!m_helper->FillInitialObjects() || !m_systematics->resetSystematics() || !m_systematics->resetSystematics()) {
+            ATH_MSG_DEBUG("Cannot fill initial objects");
+            continue;
+        	}
+            else ATH_CHECK(m_helper->FillInitialObjects(current_syst));
+ 
+            ATH_MSG_DEBUG("RemoveOverlap: ");
+            ATH_CHECK(m_helper->RemoveOverlap());
+            ATH_MSG_DEBUG("FillObjects: ");
+            ATH_CHECK(m_helper->FillObjects(current_syst));
+            ATH_MSG_DEBUG("CleanObjects?");
+            if (!m_helper->CleanObjects(current_syst)) {
+                ATH_MSG_DEBUG("Found bad objects in the current systematic" << current_syst->name());
+                continue;
+            }
+            ATH_MSG_DEBUG("Call FillEvent");
+            ATH_CHECK(m_helper->FillEvent(current_syst));
+        }
+        ATH_MSG_DEBUG("Call DumpCxAOD");
+        ATH_CHECK(m_helper->DumpCxAOD());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode xAODLoop::CheckCutflow() {
+        if (!m_RunCutFlow) return StatusCode::SUCCESS;
+        for (const auto& current_syst : m_systematics->GetKinematicSystematics()) {
+            ATH_CHECK(m_helper->CheckCutFlow(current_syst));
+        }
+        return StatusCode::SUCCESS;
+    }
+
+    std::string xAODLoop::TimeHMS(float t) {
+        std::stringstream ostr;
+        ostr << std::setw(2) << std::setfill('0') << (int) ((t / 60. / 60.)) % 24 << ":" << std::setw(2) << std::setfill('0') << ((int) (t / 60.)) % 60 << ":" << std::setw(2) << std::setfill('0') << ((int) t) % 60;
+        return ostr.str();
+    }
+    StatusCode xAODLoop::CheckInputFile(const std::string &filename) {
+        if (m_MaxEvents > 0 && (m_totEntries > m_MaxEvents + m_SkipEvents)) return StatusCode::SUCCESS;
+        ATH_CHECK(LoadFile(filename));
+        if (m_event->getEntries() == 0) ATH_MSG_WARNING("File: " << filename << " does not contain any event.");
+
+        ATH_MSG_INFO("Adding file " << filename << " with " << m_event->getEntries() << " events to the input datasetlist");
+
+        m_totEntries += m_event->getEntries();
+        m_inputFiles.push_back(filename);
+        ATH_CHECK(beginInputFile());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode xAODLoop::BuildFileLists() {
+        if (m_RunType == RunType::Local) {
+            std::string Input = m_InFileName;
+            ATH_MSG_INFO("Loading files from " << m_InFileName);
+            if (Input.find("*") < Input.size() || Input.rfind("/") == Input.size() - 1) {
+                ATH_MSG_DEBUG("Assume that either a directory or a wildcard is given");
+                std::string Path = Input.substr(0, Input.rfind("/") + 1);
+                std::vector<std::string> List = ListDirectory(Path, ".root");
+                for (const auto &F : List)
+                ATH_CHECK(CheckInputFile(F));
+            } else ATH_CHECK(CheckInputFile(Input));
+
+        } else if (m_RunType == RunType::Batch || m_RunType == RunType::Grid) {
+            ATH_MSG_INFO("Loading files from " << m_InFileName);
+            std::ifstream sampleList(m_InFileName);
+            if (!sampleList.is_open()) {
+                ATH_MSG_FATAL("Could not open the input file lists");
+                return StatusCode::FAILURE;
+            }
+            std::string tmpFile;
+            while (getline(sampleList, tmpFile)) {
+                std::string temp = tmpFile;
+                if (temp.find(",") < temp.size()) {
+                    temp = temp + ","; // adding comma in the end to make the 'while' working for the last file
+                    ATH_MSG_DEBUG("Line " << temp << " is comma separated. Splitting...");
+                    while (temp.find(",") < temp.size()) {
+                        std::size_t Pos = temp.find(",");
+                        std::string Data = temp.substr(0, Pos);
+                        ATH_CHECK(CheckInputFile(Data));
+                        temp = temp.substr(Pos + 1, temp.size());
+                    }
+                } else ATH_CHECK(CheckInputFile(tmpFile));
+            }
+        }
+        if (m_inputFiles.size() == 0) {
+            ATH_MSG_ERROR("Could not find any file to analyze...exiting");
+            return StatusCode::FAILURE;
+        }
+        if (m_init_LoadFirstEv) {
+            ATH_MSG_INFO("Load first event as it might needed for initializations");
+            m_event->getEntry(0);
+        }
+        return StatusCode::SUCCESS;
+    }
+    void xAODLoop::SignalHandler(int SigNum) {
+        if (SigNum == 2) {
+            std::cout << "xAODLoop -- Retrieved exception signal: " << SigNum << ". Will abort the loop" << std::endl;
+            exit (EXIT_SUCCESS);
+        }
+    }
+    StatusCode xAODLoop::RetrieveEventInfo() {
+        if (!m_event->retrieve(m_ConstEvtInfo, "EventInfo").isSuccess()) {
+            ATH_MSG_FATAL("Failed to retrieve event info collection, exiting...");
+            return StatusCode::FAILURE;
+        }
+        if (m_ConstEvtInfo->eventType(xAOD::EventInfo::IS_SIMULATION) == isData()) {
+            ATH_MSG_FATAL("The analysis is configured to run over data while the input file is MC...");
+            return StatusCode::FAILURE;
+        }
+        return StatusCode::SUCCESS;
+    }
+    std::vector<std::string> xAODLoop::ListDirectory(std::string Path, std::string WildCard) {
+        std::vector<std::string> List;
+        // std::vector<std::string> wC_pieces;
+        // WildCard = WildCard+"*";
+        // while (WildCard.find("*") < WildCard.size())
+        // {
+        // std::string Piece = WildCard.substr(0,WildCard.find("*"));
+        // wC_pieces.push_back(Piece);
+        // ATH_MSG_DEBUG("Found wildcard "<<Piece<<" in "<<WildCard );
+        // WildCard=WildCard.substr(WildCard.find("*")+1, WildCard.size());
+        // }
+        DIR *dir;
+        dirent *ent;
+        ATH_MSG_DEBUG("List directory: " << Path);
+        if ((dir = opendir(Path.c_str())) != NULL) {
+            while ((ent = readdir(dir)) != NULL) {
+                std::string Entry = ent->d_name;
+                if (Entry == "." || Entry == "..") continue; //skip the .. and . lines in ls
+                ATH_MSG_DEBUG("File in dir: " << Entry);
+                if (WildCard.size() == 0 || Entry.find(WildCard) < Entry.size()) List.push_back(Path + "/" + Entry);
+
+            }
+            closedir(dir);
+        } else ATH_MSG_WARNING("No such file or directory " << Path);
+        return List;
+    }
+#endif
+
+}

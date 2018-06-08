@@ -1,0 +1,12 @@
+<lcgdict>
+   <class name="XAMPP::DMbbAnalysisConfig" />
+   <class name="XAMPP::DMbbAnalysisHelper" />
+   <class name="XAMPP::DMbbAnalysisUtils" />
+   <class name="XAMPP::JVTAnalysisConfig" />
+   <class name="XAMPP::JVTAnalysisHelper" />
+   <class name="XAMPP::Stop0LAnalysisConfig" />
+   <class name="XAMPP::Stop0LAnalysisHelper" />
+   <class name="XAMPP::Stop0LMetSelector" />
+   <class name="XAMPP::Stop0LTruthAnalysisHelper" />
+   <class name="XAMPP::Stop0LTruthSelector" />   
+</lcgdict>

@@ -1,0 +1,26 @@
+#### How to build
+
+rcSetup Base,2.4.42
+rc clean
+rc build
+
+#### XAMPPbase 
+The XAMPP framework is here https://gitlab.cern.ch/atlas-mpp-xampp, but make sure you download the tag that works with release 20.7 
+
+The XAMPPbase package can be used to run an analysis on ATLAS xAODs (original and derived). An analysis and its selections have to be defined. The standard output is a root file with cutflow histograms and trees for each systematic uncertainty affecting the event kinematics and each analysis. Additional analysis specific classes can be implemented in your own analysis package inheriting from XAMPPbase. SUSYTools is exploited for the implementation of the CP recommendations in all classes containing SUSY in their name. You can also implement your own CP tools independent of SUSYTools if needed. For further information please visit our Twiki https://twiki.cern.ch/twiki/bin/view/AtlasProtected/XAMPPSoftwareFramework.
+
+Default cuts: GRL, LArTile, bad muons, cosmic muons --> XAMPPbase/Root/AnalysisConfig.cxx
+Muon selection: XAMPPbase/Root/Muons.cxx 
+
+#### XAMPPanalyses
+Customize your cuts ie. 2 signal leptons and 2 baseline leptons, number of jets, ZWindow, same-flavor leptons, opposite-sign leptons etc... --> XAMPPanalyses/Root/HeavyIonAnalysisConfig.cxx
+ 
+Add variables to the n-tuple: XAMPPanalyses/Root/HeavyIonAnalysisHelper.cxx
+
+#### SUSYTools (version 00-08-74)
+https://svnweb.cern.ch/trac/atlasoff/browser/PhysicsAnalysis/SUSYPhys/SUSYTools/tags/
+SUSY objects definition: SUSYTools/Root/SUSYObjDef_xAOD.cxx --> define the SUSY objects ie. muons, electrons, jets, photons... that would be used in XAMPP 
+SUSYTools initialization: SUSYTools/Root/SUSYToolsInit.cxx --> default configurations for the objects ie. jet calibration, jet JVT, muon signal eta, muon signal pt etc...
+
+This configurations are actually initialized in a separate txt file (to overwrite the default values in SUSYToolsInit) at XAMPPanalyses/data/SUSYTools_HeavyIon.conf 
+

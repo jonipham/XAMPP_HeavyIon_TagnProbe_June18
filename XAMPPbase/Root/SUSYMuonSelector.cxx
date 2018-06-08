@@ -1,0 +1,466 @@
+#include <XAMPPbase/SUSYMuonSelector.h>
+#include <XAMPPbase/AnalysisUtils.h>
+#include <XAMPPbase/Cuts.h>
+
+#include <PATInterfaces/SystematicSet.h>
+#include <MuonEfficiencyCorrections/MuonTriggerScaleFactors.h>
+#include <MuonEfficiencyCorrections/IMuonEfficiencyScaleFactors.h>
+#include <SUSYTools/SUSYObjDef_xAOD.h>
+
+namespace XAMPP {
+    SUSYMuonSelector::SUSYMuonSelector(std::string myname) :
+                SUSYParticleSelector(myname),
+                m_BaselineD0SigCut(-1.),
+                m_BaselineZ0SinThetaCut(-1.),
+                m_SignalD0SigCut(-1),
+                m_SignalZ0SinThetaCut(-1),
+                m_RequireIsoSignal(false), //true
+                m_xAODMuons(nullptr),
+                m_Muons(nullptr),
+                m_MuonsAux(nullptr),
+                m_PreMuons(nullptr),
+                m_SignalMuons(nullptr),
+                m_BaselineMuons(nullptr),
+                m_SeparateSF(false),
+                m_SF(),
+                m_doRecoSF(false), //
+                m_doIsoSF(false), //
+                m_doTTVASF(false ),//
+                m_doTriggerSF(true),
+                m_TriggerExp2015(),
+                m_TriggerExp2016(),
+#ifdef XAOD_STANDALONE
+                m_TriggerExp2015_str(""),
+                m_TriggerExp2016_str(""),
+#endif
+                m_StoreMultipleTrigSF(false),
+                m_SFtool_Reco(""),
+                m_SFtool_Iso(""),
+                m_SFtool_TTVA(""),
+                m_SFtool_Trig2015(""),
+                m_SFtool_Trig2016(""),
+                m_NumBadMuons(0),
+                m_NumCosmics(0) {
+        SetContainerKey("Muons");
+        SetObjectType(XAMPP::SelectionObject::Muon);
+        declareProperty("BaslineIP_d0Cut", m_BaselineD0SigCut);
+        declareProperty("BaslineIP_Z0Cut", m_BaselineZ0SinThetaCut);
+
+        declareProperty("SignalIP_d0Cut", m_SignalD0SigCut);
+        declareProperty("SignalIP_Z0Cut", m_SignalZ0SinThetaCut);
+        declareProperty("RequireIsoSignal", m_RequireIsoSignal);
+
+        declareProperty("SeparateSF", m_SeparateSF);
+        declareProperty("ApplyIsoSF", m_doIsoSF);
+        declareProperty("ApplyTTVASF", m_doTTVASF);
+        declareProperty("ApplyRecoSF", m_doRecoSF);
+        declareProperty("ApplyTriggerSF", m_doTriggerSF);
+
+        declareProperty("SFTrigger2015", m_TriggerExp2015);
+        declareProperty("SFTrigger2016", m_TriggerExp2016);
+#ifdef XAOD_STANDALONE
+        declareProperty("SFTrigger2015String", m_TriggerExp2015_str);
+        declareProperty("SFTrigger2016String", m_TriggerExp2016_str);
+#endif
+        declareProperty("Reco_SFTool", m_SFtool_Reco);
+        declareProperty("Iso_SFTool", m_SFtool_Iso);
+        declareProperty("TTVA_SFTool", m_SFtool_TTVA);
+        declareProperty("Trig2015_SFTool", m_SFtool_Trig2015);
+        declareProperty("Trig2016_SFTool", m_SFtool_Trig2016);
+//        declareProperty("")
+    }
+
+    SUSYMuonSelector::~SUSYMuonSelector() {
+        for (auto& ScaleFactors : m_SF) {
+            delete ScaleFactors.MuoSF;
+            delete ScaleFactors.MuoSF_Isol;
+            delete ScaleFactors.MuoSF_Reco;
+            delete ScaleFactors.MuoSF_TTVA;
+            for (auto& T : ScaleFactors.TriggerSFs)
+                delete T;
+        }
+    }
+    StatusCode SUSYMuonSelector::LoadSelection(const CP::SystematicSet &systset) {
+        ATH_CHECK(LoadPreSelectedContainer(m_PreMuons, &systset));
+        SetSystematics(systset);
+        ATH_CHECK(LoadViewElementsContainer("baseline", m_BaselineMuons));
+        ATH_CHECK(LoadViewElementsContainer("signal", m_SignalMuons));
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYMuonSelector::InitTriggerSFDecorators(const std::vector<std::string> &Triggers, std::vector<XAMPP::SUSYMuonTriggerSFHandler*> &Decorators, const CP::SystematicSet* set, XAMPP::Storage<double>* TotSF, unsigned int year) {
+        bool WriteTrig = m_doTriggerSF && (XAMPP::ToolIsAffectedBySystematic(m_SFtool_Trig2015, set) || XAMPP::ToolIsAffectedBySystematic(m_SFtool_Trig2016, set));
+        for (const auto& T : Triggers) {
+            XAMPP::Storage<double>* TriggerStore;
+            //The decorator is not of use thus far
+            SG::AuxElement::Decorator<double>* Dec;
+            ATH_CHECK(InitSFdecorator("Trig" + (m_StoreMultipleTrigSF ? T : ""), WriteTrig, set, Dec, TriggerStore));
+            delete Dec;
+            XAMPP::SUSYMuonTriggerSFHandler* Helper = new XAMPP::SUSYMuonTriggerSFHandler(m_XAMPPInfo, m_susytools.getHandle(), T, year, !m_StoreMultipleTrigSF);
+            ATH_CHECK(Helper->SetDecorators(TotSF, TriggerStore));
+            Decorators.push_back(Helper);
+        }
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYMuonSelector::initialize() {
+        if (isInitialized()) {
+            return StatusCode::SUCCESS;
+        }
+        ATH_CHECK(SUSYParticleSelector::initialize());
+#ifdef XAOD_STANDALONE
+        XAMPP::FillVectorFromString(m_TriggerExp2015, m_TriggerExp2015_str);
+        XAMPP::FillVectorFromString(m_TriggerExp2016, m_TriggerExp2016_str);
+#endif
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<int>("BadMuon", false));
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<int>("CosmicMuon", false));
+        
+        //ATH_CHECK(m_XAMPPInfo->NewEventVariable<float>("MuonIDTrack"));
+        
+        //m_MuonIDTrack  = m_XAMPPInfo->GetVariableStorage<float>("MuonIDTrk");
+
+        m_NumBadMuons = m_XAMPPInfo->GetVariableStorage<int>("BadMuon");
+        m_NumCosmics = m_XAMPPInfo->GetVariableStorage<int>("CosmicMuon");
+
+        if ((m_TriggerExp2015.empty() || m_TriggerExp2016.empty()) && m_doTriggerSF) {
+            ATH_MSG_INFO("No trigger string given... Switch trigger SF off");
+            m_TriggerExp2015.clear();
+            m_TriggerExp2016.clear();
+            m_doTriggerSF = false;
+        }
+        if (m_doRecoSF && !m_SFtool_Reco.isSet()) {
+            m_SFtool_Reco = GetCPTool<CP::IMuonEfficiencyScaleFactors>("MuonEfficiencyScaleFactorsTool");
+            ATH_CHECK(m_SFtool_Reco.retrieve());
+        }
+        if (m_doIsoSF && !m_SFtool_Iso.isSet()) {
+            m_SFtool_Iso = GetCPTool<CP::IMuonEfficiencyScaleFactors>("MuonIsolationScaleFactorsTool");
+            ATH_CHECK(m_SFtool_Iso.retrieve());
+        }
+        if (m_doTTVASF && !m_SFtool_TTVA.isSet()) {
+            m_SFtool_TTVA = GetCPTool<CP::IMuonEfficiencyScaleFactors>("MuonTTVAEfficiencyScaleFactorsTool");
+            ATH_CHECK(m_SFtool_TTVA.retrieve());
+        }
+        if (m_doTriggerSF && !m_SFtool_Trig2015.isSet()) {
+            m_SFtool_Trig2015 = GetCPTool<CP::IMuonTriggerScaleFactors>("MuonTriggerScaleFactorsTool2015");
+            ATH_CHECK(m_SFtool_Trig2015.retrieve());
+        }
+        if (m_doTriggerSF && !m_SFtool_Trig2016.isSet()) {
+            m_SFtool_Trig2016 = GetCPTool<CP::IMuonTriggerScaleFactors>("MuonTriggerScaleFactorsTool2016");
+            ATH_CHECK(m_SFtool_Trig2016.retrieve());
+        }
+
+        if (m_doTriggerSF) {
+            ATH_MSG_INFO("Switch off the message level of the MuonTriggerSFTool");
+            dynamic_cast<const asg::AsgTool*>(m_SFtool_Trig2015.operator->())->msg().setLevel(MSG::Level::FATAL);
+            dynamic_cast<const asg::AsgTool*>(m_SFtool_Trig2016.operator->())->msg().setLevel(MSG::Level::FATAL);
+        }
+        m_StoreMultipleTrigSF = (m_TriggerExp2015.size() != 1 || m_TriggerExp2016.size() != 1);
+        for (const auto set : m_systematics->GetWeightSystematics(ObjectType())) {
+            MuoWeightDecorators Decors;
+            Decors.Systematic = set;
+
+            bool WriteIso = m_doIsoSF && XAMPP::ToolIsAffectedBySystematic(m_SFtool_Iso, set);
+            bool WriteReco = m_doRecoSF && XAMPP::ToolIsAffectedBySystematic(m_SFtool_Reco, set);
+            bool WriteTTVA = m_doTTVASF && XAMPP::ToolIsAffectedBySystematic(m_SFtool_TTVA, set);
+            bool WriteTrig = m_doTriggerSF && (XAMPP::ToolIsAffectedBySystematic(m_SFtool_Trig2015, set) || XAMPP::ToolIsAffectedBySystematic(m_SFtool_Trig2016, set));
+            if (!WriteIso && !WriteReco && !WriteTTVA && !WriteTrig) {
+                continue;
+            }
+            ATH_CHECK(InitSFdecorator("", WriteIso || WriteReco || WriteTTVA || (WriteTrig && !m_StoreMultipleTrigSF), set, Decors.MuoSF, Decors.TotalSF));
+            ATH_CHECK(InitSFdecorator("Reco", m_SeparateSF && WriteReco, set, Decors.MuoSF_Reco, Decors.TotalSF_Reco));
+            ATH_CHECK(InitSFdecorator("Isol", m_SeparateSF && WriteIso, set, Decors.MuoSF_Isol, Decors.TotalSF_Isol));
+            ATH_CHECK(InitSFdecorator("TTVA", m_SeparateSF && WriteTTVA, set, Decors.MuoSF_TTVA, Decors.TotalSF_TTVA));
+
+            ATH_CHECK(InitTriggerSFDecorators(m_TriggerExp2015, Decors.TriggerSFs, set, Decors.TotalSF, 2015));
+            ATH_CHECK(InitTriggerSFDecorators(m_TriggerExp2016, Decors.TriggerSFs, set, Decors.TotalSF, 2016));
+
+            m_SF.push_back(Decors);
+        }
+        if (m_doTriggerSF && !m_SF.empty() && m_systematics->GetWeightSystematics(ObjectType()).size() > 1) {
+            std::vector<XAMPP::SUSYMuonTriggerSFHandler*> NominalTriggerHelpers;
+            //Find the Nominal Decorator set
+            for (auto& SF : m_SF) {
+                if (SF.Systematic == m_systematics->GetNominal()) {
+                    NominalTriggerHelpers = SF.TriggerSFs;
+                    break;
+                }
+            }
+            for (auto& SF : m_SF) {
+                //These are the cases where we actually need to call the trigger SF tool
+                bool WriteTrig = m_doTriggerSF && (SF.Systematic->name().empty() || SF.Systematic->name().find("Trig") != std::string::npos);
+                if (WriteTrig) {
+                    continue;
+                }
+                for (size_t T = 0; T < NominalTriggerHelpers.size(); ++T) {
+                    if (!SF.TriggerSFs.at(T)->SetReferenceTool(NominalTriggerHelpers.at(T))) {
+                        return StatusCode::FAILURE;
+                    }
+                }
+            }
+
+        }
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYMuonSelector::LoadContainers() {
+        if (!ProcessObject()) return StatusCode::SUCCESS;
+        ATH_CHECK(LoadContainer(ContainerKey(), m_xAODMuons));
+        for (auto& ScaleFactors : m_SF) {
+            ATH_CHECK(ScaleFactors.TotalSF->ConstStore(1.));
+        }
+        return StatusCode::SUCCESS;
+    }
+
+    xAOD::MuonContainer* SUSYMuonSelector::GetCustomMuons(std::string kind) {
+        xAOD::MuonContainer* customMuons = nullptr;
+        if (LoadViewElementsContainer(kind, customMuons).isSuccess()) return customMuons;
+        return m_BaselineMuons;
+    }
+
+    MuoLink SUSYMuonSelector::GetLink(const xAOD::Muon& mu) const {
+        return MuoLink(*m_Muons, mu.index());
+    }
+    MuoLink SUSYMuonSelector::GetOrigLink(const xAOD::Muon& mu) const {
+        const xAOD::Muon* Omu = dynamic_cast<const xAOD::Muon*>(xAOD::getOriginalObject(mu));
+        return MuoLink(*m_xAODMuons, Omu != nullptr ? Omu->index() : mu.index());
+    }
+    StatusCode SUSYMuonSelector::CallSUSYTools() {
+        ATH_MSG_DEBUG("Calling SUSYMuonSelector::CallSUSYTools()..");
+        return m_susytools->GetMuons(m_Muons, m_MuonsAux, false);
+    }
+    StatusCode SUSYMuonSelector::InitialFill(const CP::SystematicSet &systset) {
+        SetSystematics(systset);
+        if (ProcessObject()) {
+            ATH_CHECK(FillFromSUSYTools(m_Muons, m_MuonsAux, m_PreMuons));
+        } else {
+            ATH_CHECK(ViewElementsContainer("container", m_Muons));
+            ATH_CHECK(ViewElementsContainer("presel", m_PreMuons));
+        }
+        return StatusCode::SUCCESS;
+    }
+
+    StatusCode SUSYMuonSelector::FillMuons(const CP::SystematicSet &systset) {
+
+        SetSystematics(systset);
+        ATH_CHECK(ViewElementsContainer("baseline", m_BaselineMuons));
+        ATH_CHECK(ViewElementsContainer("signal", m_SignalMuons));
+
+        int BadMuons = 0;
+        int CosmicMuons = 0;
+
+        for (const auto& imuon : *m_PreMuons) {
+            if (IsBadMuon(*imuon)) ++BadMuons;
+            if (IsCosmicMuon(*imuon)) ++CosmicMuons;
+            if (PassBaseline(*imuon)) m_BaselineMuons->push_back(imuon);
+            else continue;
+            if (PassSignal(*imuon)) m_SignalMuons->push_back(imuon);
+        }
+
+        ATH_CHECK(m_NumBadMuons->Store(BadMuons));
+        ATH_CHECK(m_NumCosmics->Store(CosmicMuons));
+
+        ATH_MSG_DEBUG("Number of all muons: " << m_Muons->size());
+        ATH_MSG_DEBUG("Number of preselected muons: " << m_PreMuons->size());
+        ATH_MSG_DEBUG("Number of selected baseline muons: " << m_BaselineMuons->size());
+        ATH_MSG_DEBUG("Number of selected signal muons: " << m_SignalMuons->size());
+
+        return StatusCode::SUCCESS;
+    }
+    bool SUSYMuonSelector::PassBaseline(const xAOD::IParticle &P) const {
+        if (!ParticleSelector::PassBaseline(P)) return false;
+        static FloatAccessor acc_z0sinTheta("z0sinTheta");
+        static FloatAccessor acc_d0sig("d0sig");
+        if (m_BaselineZ0SinThetaCut >= 0. && fabs(acc_z0sinTheta(P)) >= m_BaselineZ0SinThetaCut) return false;
+        if (m_BaselineD0SigCut >= 0. && fabs(acc_d0sig(P)) >= m_BaselineD0SigCut) return false;
+        return true;
+    }
+    bool SUSYMuonSelector::PassSignal(const xAOD::IParticle &P) const {
+        if (!ParticleSelector::PassSignal(P)) return false;
+        static FloatAccessor acc_z0sinTheta("z0sinTheta");
+        static FloatAccessor acc_d0sig("d0sig");
+        if (m_SignalZ0SinThetaCut >= 0. && fabs(acc_z0sinTheta(P)) >= m_SignalZ0SinThetaCut) return false;
+        if (m_SignalD0SigCut >= 0. && fabs(acc_d0sig(P)) >= m_SignalD0SigCut) return false;
+        //if (m_RequireIsoSignal && !PassIsolation(P)) return false;
+        return true;
+    }
+    StatusCode SUSYMuonSelector::SaveScaleFactor() {
+        if (m_SF.empty()) return StatusCode::SUCCESS;
+        const CP::SystematicSet* kineSet = m_systematics->GetCurrent();
+        ATH_MSG_DEBUG("Save SF of " << GetSignalMuons()->size() << " muons");
+        for (auto const& ScaleFactors : m_SF) {
+            if (kineSet != m_systematics->GetNominal() && ScaleFactors.Systematic != m_systematics->GetNominal()) continue;
+            ATH_CHECK(m_systematics->setSystematic(ScaleFactors.Systematic));
+            double TotRecoSF(1.), TotIsoSF(1.), TotTTVASF(1.);
+            for (const auto& imuon : *GetSignalMuons()) {
+                ATH_CHECK(SaveMuonSF(*imuon, m_SFtool_Reco, ScaleFactors.MuoSF_Reco, TotRecoSF, m_doRecoSF));
+                ATH_CHECK(SaveMuonSF(*imuon, m_SFtool_Iso, ScaleFactors.MuoSF_Isol, TotIsoSF, m_doIsoSF));
+                ATH_CHECK(SaveMuonSF(*imuon, m_SFtool_TTVA, ScaleFactors.MuoSF_TTVA, TotTTVASF, m_doTTVASF && imuon->pt() > 1.e4));
+                DecorateTotalMuonSF(*imuon, ScaleFactors);
+            }
+            ATH_CHECK(ScaleFactors.TotalSF_Reco->Store(TotRecoSF));
+            ATH_CHECK(ScaleFactors.TotalSF_Isol->Store(TotIsoSF));
+            ATH_CHECK(ScaleFactors.TotalSF_TTVA->Store(TotTTVASF));
+            ATH_CHECK(ScaleFactors.TotalSF->Store(TotRecoSF * TotTTVASF * TotIsoSF));
+            if (m_doTriggerSF) {
+                for (auto& helper : ScaleFactors.TriggerSFs) {
+                    ATH_CHECK(helper->SaveSF(GetSignalMuons()));
+                }
+            }
+        }
+        ATH_CHECK(m_systematics->resetSystematics());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYMuonSelector::StoreTruthClassifer(xAOD::Muon & mu) const {
+        if (!m_XAMPPInfo->isMC()) return StatusCode::SUCCESS;
+        static SG::AuxElement::ConstAccessor<ElementLink<xAOD::TruthParticleContainer>> acc_truthLink("truthParticleLink");
+        const xAOD::TrackParticle* mu_trk = mu.primaryTrackParticle();
+        if (!mu_trk) {
+            ATH_MSG_DEBUG("No InDet track found for the muon");
+            mu_trk = mu.primaryTrackParticle();
+            if (!mu_trk) {
+                ATH_MSG_ERROR("There is no muon track");
+                return StatusCode::FAILURE;
+            }
+        }
+        static SG::AuxElement::Decorator<ElementLink<xAOD::TruthParticleContainer>> dec_truthLink("truthParticleLink");
+        static IntDecorator dec_truthType("truthType");
+        static IntDecorator dec_truthOrigin("truthOrigin");
+        dec_truthLink(mu) = acc_truthLink(*mu_trk);
+        dec_truthType(mu) = getParticleTruthType(mu_trk);
+        dec_truthOrigin(mu) = getParticleTruthOrigin(mu_trk);
+        return StatusCode::SUCCESS;
+    }
+    
+   
+    bool SUSYMuonSelector::IsBadMuon(const xAOD::Muon& mu) const {
+        static CharAccessor acc_bad("bad");
+        return SUSYParticleSelector::PassPreSelection(mu) && acc_bad(mu);
+    }
+    bool SUSYMuonSelector::IsCosmicMuon(const xAOD::Muon& mu) const {
+        static CharAccessor acc_cosmic("cosmic");
+        return SUSYParticleSelector::PassBaseline(mu) && acc_cosmic(mu);
+    }
+    StatusCode SUSYMuonSelector::SaveMuonSF(const xAOD::Muon& mu, ToolHandle<CP::IMuonEfficiencyScaleFactors> &SFtool, SG::AuxElement::Decorator<double>* SFdecor, double &TotSF, bool doSF) {
+        float SF = 1.;
+        if (doSF && SFtool->getEfficiencyScaleFactor(mu, SF, m_XAMPPInfo->GetOrigInfo()) == CP::CorrectionCode::Error) return StatusCode::FAILURE;
+        SFdecor->operator()(mu) = SF;
+        TotSF *= SF;
+        return StatusCode::SUCCESS;
+    }
+    void SUSYMuonSelector::DecorateTotalMuonSF(const xAOD::Muon& mu, const MuoWeightDecorators& Decors) const {
+        Decors.MuoSF->operator()(mu) = Decors.MuoSF_Reco->operator()(mu) * Decors.MuoSF_TTVA->operator()(mu) * Decors.MuoSF_Isol->operator()(mu);
+    }
+
+    //#################################################################################################
+    //                                  SUSYMuonTriggerSFHandler
+    //#################################################################################################
+    SUSYMuonTriggerSFHandler::SUSYMuonTriggerSFHandler(const XAMPP::EventInfo* Info, ToolHandle<ST::ISUSYObjDef_xAODTool> ST, const std::string &Trigger, int year, bool UpdateTotal) :
+                m_RefHandler(this),
+                m_Info(Info),
+                m_SUSYTools(ST),
+                m_SF_string(Trigger),
+                m_Trigger_string(Trigger),
+                m_year(year),
+                m_UpdateTotalSF(UpdateTotal),
+                m_DependOnTrigger(false),
+                m_Cut(nullptr),
+                m_TotalSF(nullptr),
+                m_TotalTrigSF(nullptr) {
+
+    }
+    void SUSYMuonTriggerSFHandler::ApplyIfTriggerFired(bool B) {
+        m_DependOnTrigger = B;
+    }
+    StatusCode SUSYMuonTriggerSFHandler::CallSFTool(const xAOD::MuonContainer* Muons, bool InternalCall) {
+        if (!isAvailable()) {
+            float SF = m_SUSYTools->GetTotalMuonSF(*Muons, false, false, m_SF_string);
+            if (!m_TotalTrigSF->Store(SF).isSuccess()) {
+                Error("SUSYMuonTriggerSFHandler::SaveSF()", "Failed to save the value %f of the trigger SF %s", SF, m_SF_string.c_str());
+                return StatusCode::FAILURE;
+            }
+        }
+        if (m_UpdateTotalSF && !InternalCall) {
+            return m_TotalSF->Store((m_TotalSF->isAvailable() ? m_TotalSF->GetValue() : 1.) * GetSF());
+        }
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYMuonTriggerSFHandler::SaveSF(const xAOD::MuonContainer* Muons) {
+        if (m_SUSYTools->treatAsYear() != m_year || (m_DependOnTrigger && !m_Cut->ApplyCut())) {
+            if (!isAvailable()) {
+                return m_TotalTrigSF->Store(1.);
+            }
+            return StatusCode::SUCCESS;
+        }
+        if (m_RefHandler != this) {
+            if (!m_RefHandler->CallSFTool(Muons, true).isSuccess()) {
+                return StatusCode::FAILURE;
+            }
+            if (!m_TotalTrigSF->Store(m_RefHandler->GetSF()).isSuccess()) {
+                return StatusCode::FAILURE;
+            }
+        }
+
+        return CallSFTool(Muons, false);
+    }
+    StatusCode SUSYMuonTriggerSFHandler::SetDecorators(XAMPP::Storage<double>* TotalSF, XAMPP::Storage<double>* TriggerSF) {
+        if (!TotalSF || !TriggerSF) {
+            Error("SUSYMuonTriggerSFHandler::SetDecorators()", "One of the Storage elements is nullptr");
+            return StatusCode::FAILURE;
+        }
+        m_TotalSF = TotalSF;
+        m_TotalTrigSF = TriggerSF;
+
+        ST::SUSYObjDef_xAOD* ST = dynamic_cast<ST::SUSYObjDef_xAOD*>(m_SUSYTools.operator->());
+        if (m_Cut) delete m_Cut;
+        std::vector<std::string> Triggers = ST->GetTriggerOR(m_Trigger_string);
+        if (!m_DependOnTrigger) {
+            return StatusCode::SUCCESS;
+        }
+        for (auto&T : Triggers) {
+            if (T.find("HLT_HLT") != std::string::npos) {
+                T = T.substr(4, T.size());
+            }
+            Cut* Trigger = new Cut("PassTrigger", Cut::CutType::CutChar, true);
+            if (!Trigger->initialize(m_Info->GetVariableStorage<char>("Trig" + T), 1, Cut::Relation::Equal)) {
+                Warning("SUSYMuonTriggerSFHandler::SetDecorators()", "Trigger %s not defined in the TriggerTool", T.c_str());
+                delete Trigger;
+            } else if (!m_Cut) {
+                m_Cut = Trigger;
+            } else {
+                m_Cut = m_Cut->combine(Trigger, Cut::Combine::OR);
+            }
+        }
+        if (!m_Cut) {
+            Error("SUSYMuonTriggerSFHandler::SetDecorators()", "No trigger %s defined in the TriggerTool", m_SF_string.c_str());
+            return StatusCode::FAILURE;
+        }
+        return StatusCode::SUCCESS;
+    }
+    SUSYMuonTriggerSFHandler::~SUSYMuonTriggerSFHandler() {
+        if (m_Cut) delete m_Cut;
+    }
+    bool SUSYMuonTriggerSFHandler::isAvailable() {
+        return m_TotalTrigSF->isAvailable();
+    }
+    double SUSYMuonTriggerSFHandler::GetSF() {
+        if (!isAvailable()) {
+            Warning("SUSYMuonTriggerSFHandler::GetSF()", "SaveSF() method not called. Return 1.");
+            return 1.;
+        }
+        return m_TotalTrigSF->GetValue();
+    }
+    void SUSYMuonTriggerSFHandler::DefineTrigger(const std::string &Trigger) {
+        if (!Trigger.empty()) m_Trigger_string = Trigger;
+    }
+    bool SUSYMuonTriggerSFHandler::SetReferenceTool(SUSYMuonTriggerSFHandler* Ref) {
+        if (!Ref || Ref->name() != name() || year() != Ref->year()) {
+            return false;
+        }
+        m_RefHandler = Ref;
+        return true;
+    }
+    const std::string& SUSYMuonTriggerSFHandler::name() {
+        return m_SF_string;
+    }
+    int SUSYMuonTriggerSFHandler::year() {
+        return m_year;
+    }
+
+}

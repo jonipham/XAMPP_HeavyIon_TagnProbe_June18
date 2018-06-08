@@ -1,0 +1,1 @@
+root://grid-dc.rzg.mpg.de:1094//pnfs/rzg.mpg.de/data/atlas/dq2/atlaslocalgroupdisk/rucio/mc15_13TeV/6c/7c/DAOD_SUSY2.10720832._000001.pool.root.1

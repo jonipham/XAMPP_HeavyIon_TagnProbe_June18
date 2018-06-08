@@ -1,0 +1,38 @@
+This package is based on https://gitlab.cern.ch/atlas-mpp-xampp/XAMPPbase
+
+*******************************************************
+*******************************************************
+***                                                 ***
+***  XAMPPanalyses - June 29th, 2016                ***
+***  Developers:                                    ***
+***      nicolas.koehler  @ cern.ch                 ***
+***      jojungge         @ cern.ch                 ***
+***                                                 ***
+*******************************************************
+*******************************************************
+
+The XAMPPanalyses package ($SVNINST/Institutes/MPI/MDT/analysis/XAMPPanalyses/trunk) 
+depends on the XAMPPbase package ($SVNINST/Institutes/MPI/MDT/analysis/XAMPPbase/trunk)
+For more information on XAMPPbase, see $SVNINST/Institutes/MPI/MDT/analysis/XAMPPbase/trunk/README.
+With this package it is possible to run analysis specific routines and get analysis specific 
+outputs. The base method and variables are already implemented in the base classes of XAMPPbase.
+
+Currently implemented analyses:
+- Physics:
+    SUSY Stop0L (and DM)
+    DM bb+MET
+- Performance:
+    JVT studies
+
+To setup the area follow the instructions in XAMPPbase/README, then before building the package do:
+
+* Download Framework in workarea directory where you did the RC release setup:
+    - git clone ssh://git@gitlab.cern.ch:7999/atlas-mpp-xampp/XAMPPanalyses.git
+
+* For Stop0L ISR analysis:
+    - If you want to run the Stop0L ISR analysis, you have to checkout the RestFrames package in addition. Do this using:
+        git clone https://github.com/lawrenceleejr/Ext_RestFrames.git
+    - Currently this *only* works in release 20.7 (there is no Ext_RestFrames compiling in release 21 yet!)
+    - The XAMPPanalyses package gets compiled and the ROOTCORE_PACKAGE_Ext_RestFrames flag gets set
+    - You now can use the --doISR flag of XAMPPanalyses/python/runStop0Lep.py 
+    

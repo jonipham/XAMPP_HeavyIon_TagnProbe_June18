@@ -1,0 +1,263 @@
+#include <XAMPPbase/SUSYJetSelector.h>
+
+namespace XAMPP {
+
+    static SG::AuxElement::ConstAccessor<char> dec_bad("bad");
+    //static SG::AuxElement::ConstAccessor<char> dec_bjet("bjet");
+
+    static SG::AuxElement::Decorator<int> dec_NTrks("NTrks");
+    //static SG::AuxElement::Decorator<double> dec_MV2c10("MV2c10");
+
+    SUSYJetSelector::SUSYJetSelector(std::string myname) :
+                SUSYParticleSelector(myname),
+                m_xAODJets(nullptr),
+                m_Jets(nullptr),
+                m_PreJets(nullptr),
+                m_BaselineJets(nullptr),
+                m_PreJVTJets(nullptr),
+                m_SignalJets(nullptr),
+                m_PreFatJets(nullptr),
+                //m_BJets(nullptr),
+                m_LightJets(nullptr),
+                m_decNBad(nullptr),
+                m_bJetEtaCut(-1.),
+                m_SeparateSF(false),
+                m_SF(),
+                //m_doBTagSF(true),
+                m_doJVTSF(true),
+                m_doLargeRdecors(true),
+                m_Kt10_BaselinePt(0),
+                m_Kt10_BaselineEta(-1),
+                m_Kt10_SignalPt(0),
+                m_Kt10_SignalEta(-1),
+                m_Kt02_BaselinePt(0),
+                m_Kt02_BaselineEta(-1),
+                m_Kt02_SignalPt(0),
+                m_Kt02_SignalEta(-1),
+                m_dec_jet_alg("JetAlgorithm"),
+                m_acc_jet_alg("JetAlgorithm") {
+        declareProperty("bJetEtaCut", m_bJetEtaCut);
+        declareProperty("SeparateSF", m_SeparateSF); // if this option is switched on the jet SF are saved split into BTag and JVT
+        //declareProperty("ApplyBTagSF", m_doBTagSF);
+        declareProperty("ApplyJVTSF", m_doJVTSF);
+        declareProperty("BosonTagging", m_doLargeRdecors);
+
+        declareProperty("AntiKt10_BaselinePt", m_Kt10_BaselinePt);
+        declareProperty("AntiKt10_BaselineEta", m_Kt10_BaselineEta);
+        declareProperty("AntiKt10_SignalPt", m_Kt10_SignalPt);
+        declareProperty("AntiKt10_SignalEta", m_Kt10_SignalEta);
+
+        declareProperty("AntiKt02_BaselinePt", m_Kt02_BaselinePt);
+        declareProperty("AntiKt02_BaselineEta", m_Kt02_BaselineEta);
+        declareProperty("AntiKt02_SignalPt", m_Kt02_SignalPt);
+        declareProperty("AntiKt02_SignalEta", m_Kt02_SignalEta);
+
+        SetContainerKey("AntiKt4EMTopoJets");
+        SetObjectType(XAMPP::SelectionObject::Jet);
+    }
+
+    SUSYJetSelector::~SUSYJetSelector() {
+        for (auto const& ScaleFactors : m_SF) {
+            delete ScaleFactors.JetSF;
+            //delete ScaleFactors.JetSF_BTag;
+            delete ScaleFactors.JetSF_JVT;
+        }
+    }
+    StatusCode SUSYJetSelector::initialize() {
+        if (isInitialized()) {
+            return StatusCode::SUCCESS;
+        }
+        ATH_CHECK(SUSYParticleSelector::initialize());
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<int>("BadJet", false));
+        m_decNBad = m_XAMPPInfo->GetVariableStorage<int>("BadJet");
+        for (const auto set : m_systematics->GetWeightSystematics(XAMPP::SelectionObject::BTag)) {
+            if (set == m_systematics->GetNominal()) continue;
+            JetWeightDecorators Decors;
+            Decors.Systematic = set;
+            ATH_CHECK(InitSFdecorator("", true, set, Decors.JetSF, Decors.TotalSF, "Jet"));
+            ATH_CHECK(InitSFdecorator("JVT", false, set, Decors.JetSF_JVT, Decors.TotalSF_JVT, "Jet"));
+            //ATH_CHECK(InitSFdecorator("BTag", m_SeparateSF && m_doBTagSF, set, Decors.JetSF_BTag, Decors.TotalSF_BTag, "Jet"));
+            m_SF.push_back(Decors);
+        }
+        for (const auto set : m_systematics->GetWeightSystematics(ObjectType())) {
+            JetWeightDecorators Decors;
+            Decors.Systematic = set;
+            ATH_CHECK(InitSFdecorator("", true, set, Decors.JetSF, Decors.TotalSF, "Jet"));
+            //ATH_CHECK(InitSFdecorator("BTag", m_SeparateSF && set == m_systematics->GetNominal(), set, Decors.JetSF_BTag, Decors.TotalSF_BTag, "Jet"));
+            ATH_CHECK(InitSFdecorator("JVT", m_SeparateSF && m_doJVTSF, set, Decors.JetSF_JVT, Decors.TotalSF_JVT, "Jet"));
+            m_SF.push_back(Decors);
+        }
+
+        return StatusCode::SUCCESS;
+    }
+
+    StatusCode SUSYJetSelector::LoadContainers() {
+        if (!ProcessObject()) return StatusCode::SUCCESS;
+        for (auto& ScaleFactors : m_SF) {
+            ATH_CHECK(ScaleFactors.TotalSF->ConstStore(1.));
+        }
+        return StatusCode::SUCCESS;
+    }
+
+    xAOD::JetContainer* SUSYJetSelector::GetCustomJets(const std::string &kind) {
+        xAOD::JetContainer* customJets = nullptr;
+        if (LoadViewElementsContainer(kind, customJets).isSuccess()) return customJets;
+        return m_BaselineJets;
+    }
+
+    StatusCode SUSYJetSelector::InitialFill(const CP::SystematicSet &systset) {
+        SetSystematics(systset);
+        if (ProcessObject()) ATH_CHECK(CalibrateJets(ContainerKey(), m_Jets, m_PreJets));
+        else {
+            ATH_CHECK(ViewElementsContainer("container", m_Jets));
+            ATH_CHECK(ViewElementsContainer("presel", m_PreJets));
+        }
+        ATH_CHECK(ViewElementsContainer("PreFattys", m_PreFatJets));
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYJetSelector::CalibrateJets(const std::string &Key, xAOD::JetContainer* &Container, xAOD::JetContainer* &PreSelected, const std::string &PreSelName, JetAlgorithm Cone) {
+        xAOD::ShallowAuxContainer* AuxContainer;
+        LinkStatus Link = CreateContainerLinks(Key, Container, AuxContainer);
+        if (Link == LinkStatus::Failed) return StatusCode::FAILURE;
+        else if (Link == LinkStatus::Created) {
+            if (Cone == JetAlgorithm::AntiKt10) ATH_CHECK(m_susytools->GetFatJets(Container, AuxContainer, false, Key, m_doLargeRdecors));
+            else if (Cone == JetAlgorithm::AntiKt4) ATH_CHECK(m_susytools->GetJets(Container, AuxContainer, false));
+            ATH_CHECK(ViewElementsContainer(PreSelName.empty() ? "JetPreSel" : PreSelName, PreSelected));
+            for (const auto& Jet : *Container) {
+                if (Cone == JetAlgorithm::AntiKt2)SetSelectionDecorators(*Jet, true);
+
+                m_dec_jet_alg(*Jet) = Cone;
+                if (PassPreSelection(*Jet)) PreSelected->push_back(Jet);
+            }
+            PreSelected->sort(XAMPP::ptsorter);
+        } else if (Link == LinkStatus::Loaded) {
+            ATH_CHECK(LoadViewElementsContainer((PreSelName.empty() ? "JetPreSel" : PreSelName), PreSelected, true));
+        }
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYJetSelector::CalibrateJets(const std::string &Key, xAOD::JetContainer* &PreSelected, const std::string &PreSelName, JetAlgorithm Cone) {
+        xAOD::JetContainer* Container;
+        ATH_CHECK(CalibrateJets(Key, Container, PreSelected, PreSelName, Cone));
+        return StatusCode::SUCCESS;
+    }
+    bool SUSYJetSelector::IsBadJet(const xAOD::Jet& jet) const {
+        return dec_bad(jet) && SUSYParticleSelector::PassBaseline(jet);
+    }
+    /*double SUSYJetSelector::BtagBDT(const xAOD::Jet& jet) const {
+        double weight_MV2c10(0.);
+        jet.btagging()->MVx_discriminant("MV2c10", weight_MV2c10);
+        return weight_MV2c10;
+    }*/
+    StatusCode SUSYJetSelector::FillJets(const CP::SystematicSet &systset) {
+
+        SetSystematics(systset);
+        ATH_CHECK(ViewElementsContainer("baseline", m_BaselineJets));
+        //Thesse jets are there to get the JVT ineffieciencies
+        ATH_CHECK(ViewElementsContainer("noJVTsignal", m_PreJVTJets));
+        ATH_CHECK(ViewElementsContainer("signal", m_SignalJets));
+        //ATH_CHECK(ViewElementsContainer("bjet", m_BJets));
+        ATH_CHECK(ViewElementsContainer("light", m_LightJets));
+
+        int NBadJets = 0;
+        for (const auto& ijet : *m_PreJets) {
+            if (IsBadJet(*ijet)) {
+                ++NBadJets;
+                continue;
+            }
+            //dec_MV2c10(*ijet) = BtagBDT(*ijet);
+            std::vector<int> nTrkVec;
+            ijet->getAttribute(xAOD::JetAttribute::NumTrkPt500, nTrkVec);
+            dec_NTrks(*ijet) = nTrkVec.size();
+
+            if (!PassBaseline(*ijet)) continue;
+            m_BaselineJets->push_back(ijet);
+            if (!PassSignalKinematics(*ijet)) continue;
+            m_PreJVTJets->push_back(ijet);
+            if (!PassSignal(*ijet)) continue;
+            m_SignalJets->push_back(ijet);
+
+            if (IsBJet(*ijet)) m_BJets->push_back(ijet);
+            else m_LightJets->push_back(ijet);
+        }
+
+        // for top reconstruction, b-jets should be sorted by b-tag weight
+        //m_BJets->sort(XAMPP::btagweightsorter);
+        ATH_CHECK(m_decNBad->Store(NBadJets));
+
+        ATH_MSG_DEBUG("Number of all jets: " << m_Jets->size());
+        ATH_MSG_DEBUG("Number of preselected jets: " << m_PreJets->size());
+        ATH_MSG_DEBUG("Number of selected baseline jets: " << m_BaselineJets->size());
+        ATH_MSG_DEBUG("Number of selected signal jets: " << m_SignalJets->size());
+        //ATH_MSG_DEBUG("Number of selected b-jets: " << m_BJets->size());
+        return StatusCode::SUCCESS;
+    }
+    bool SUSYJetSelector::IsBJet(const xAOD::Jet& jet) const {
+        //return dec_bjet(jet) && (m_bJetEtaCut < 0 || fabs(jet.eta()) < m_bJetEtaCut);
+        return (m_bJetEtaCut < 0 || fabs(jet.eta()) < m_bJetEtaCut);
+    }
+    StatusCode SUSYJetSelector::ReclusterJets(const xAOD::IParticleContainer *inputJets, double Rcone, double minPtKt4, std::string PreFix) {
+        return ParticleSelector::ReclusterJets(inputJets, Rcone, minPtKt4, PreFix);
+    }
+
+    StatusCode SUSYJetSelector::SaveScaleFactor() {
+        if (m_SF.empty()) return StatusCode::SUCCESS;
+        const CP::SystematicSet* kineSet = m_systematics->GetCurrent();
+        //m_susytools->GetTotalJetSF(const xAOD::JetContainer* goodJets, const bool btagSF = true, const bool jvtSF = true)
+        // SUSYTools decorates the jets internally:
+        static SG::AuxElement::ConstAccessor<double> dec_effscalefact("effscalefact");
+        static SG::AuxElement::ConstAccessor<float> dec_jvtscalefact("jvtscalefact");
+        ATH_MSG_DEBUG("Save SF of " << GetSignalJetsNoJVT()->size() << " jets");
+
+        for (auto const& ScaleFactors : m_SF) {
+            if (kineSet != m_systematics->GetNominal() && ScaleFactors.Systematic != m_systematics->GetNominal()) continue;
+            ATH_CHECK(m_systematics->setSystematic(ScaleFactors.Systematic));
+            double TotSF = m_susytools->GetTotalJetSF(GetSignalJetsNoJVT(), /*m_doBTagSF,*/ m_doJVTSF);
+            ATH_MSG_DEBUG("The total SF is " << TotSF);
+            double TotBTagSF(1.), TotJVTSF(1.);
+            for (const auto& ijet : *GetSignalJetsNoJVT()) {
+                //double BTagSF = /*m_doBTagSF &&*/ PassSignal(*ijet) ? dec_effscalefact(*ijet) : 1.;
+                double JvtSF = m_doJVTSF && dec_jvtscalefact.isAvailable(*ijet) ? dec_jvtscalefact(*ijet) : 1.;
+                //if (m_doBTagSF) (*ScaleFactors.JetSF_BTag)(*ijet) = BTagSF;
+                if (m_doJVTSF) (*ScaleFactors.JetSF_JVT)(*ijet) = JvtSF;
+                //TotBTagSF *= BTagSF;
+                TotJVTSF *= JvtSF;
+            }
+            ATH_CHECK(ScaleFactors.TotalSF_BTag->Store(TotBTagSF));
+            ATH_CHECK(ScaleFactors.TotalSF_JVT->Store(TotJVTSF));
+            ATH_CHECK(ScaleFactors.TotalSF->Store(TotSF));
+        }
+        return StatusCode::SUCCESS;
+    }
+    bool SUSYJetSelector::PassBaselineKinematics(const xAOD::IParticle &P) const {
+        if (!m_acc_jet_alg.isAvailable(P)) {
+            ATH_MSG_ERROR("No idea what jet algoritm was used to built the jet");
+            PromptParticle(&P);
+            return false;
+        }
+        if (m_acc_jet_alg(P) == JetAlgorithm::AntiKt4) return ParticleSelector::PassBaselineKinematics(P);
+        else if (m_acc_jet_alg(P) == JetAlgorithm::AntiKt2) {
+            return P.pt() > m_Kt02_BaselinePt && (m_Kt02_BaselineEta < 0 || fabs(P.eta()) < m_Kt02_BaselineEta);
+        } else if (m_acc_jet_alg(P) == JetAlgorithm::AntiKt10) {
+            return P.pt() > m_Kt10_BaselinePt && (m_Kt10_BaselineEta < 0 || fabs(P.eta()) < m_Kt10_BaselineEta);
+        }
+        ATH_MSG_WARNING("The current flag is unknown " << m_acc_jet_alg(P));
+        return false;
+    }
+    bool SUSYJetSelector::PassSignalKinematics(const xAOD::IParticle &P) const {
+
+        if (!m_acc_jet_alg.isAvailable(P)) {
+            ATH_MSG_ERROR("No idea what jet algoritm was used to built the jet");
+            PromptParticle(&P);
+            return false;
+        }
+        if (m_acc_jet_alg(P) == JetAlgorithm::AntiKt4) return ParticleSelector::PassSignalKinematics(P);
+        else if (m_acc_jet_alg(P) == JetAlgorithm::AntiKt2) {
+            return P.pt() > m_Kt02_SignalPt && (m_Kt02_SignalEta < 0 || fabs(P.eta()) > m_Kt02_SignalEta);
+        } else if (m_acc_jet_alg(P) == JetAlgorithm::AntiKt10) {
+            return P.pt() > m_Kt10_SignalPt && (m_Kt10_SignalEta < 0 || fabs(P.eta()) > m_Kt10_SignalEta);
+        }
+        ATH_MSG_WARNING("The current flag is unknown " << m_acc_jet_alg(P));
+        return false;
+    }
+
+}

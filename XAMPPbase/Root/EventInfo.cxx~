@@ -1,0 +1,346 @@
+#include <XAMPPbase/EventInfo.h>
+#include <XAMPPbase/AnalysisUtils.h>
+#include <XAMPPbase/TreeHelpers.h>
+#include <XAMPPbase/ISystematics.h>
+
+#include <vector>
+#include <iostream>
+
+// EDM include(s):
+#include <PATInterfaces/SystematicSet.h>
+
+#include <PileupReweighting/PileupReweightingTool.h>
+#include <GoodRunsLists/GoodRunsListSelectionTool.h>
+
+namespace XAMPP {
+
+    EventInfo::EventInfo(std::string myname) :
+                AsgTool(myname),
+#ifdef XAOD_STANDALONE
+                m_output_level(MSG::INFO),
+#endif
+                m_ConstEvtInfo(),
+                m_EvtInfo(),
+                m_primaryVtx(nullptr),
+                m_ActSys(nullptr),
+                m_systematics("SystematicsTool"),
+                m_prwTool("PrwTool"),
+                m_GrlTool("GoodRunsListSelectionTool"),
+                m_ApplyPRW(true),
+                m_ApplyGRL(true),
+                m_Init(false),
+                m_Locked(false),
+                m_Filter(true),
+                m_RecoFlags(true),
+                m_DecPup(),
+                m_nNVtx(0),
+                //m_nPVtx(0),
+                m_PassGRL(0),
+                m_PassLArTile(0),
+                m_HasVtx(0),
+                m_Keeper(StorageKeeper::GetInstance()) {
+#ifdef XAOD_STANDALONE
+        declareProperty("OutputLevel", m_output_level);
+#endif
+        declareProperty("SystematicsTool", m_systematics);
+        declareProperty("ApplyGRLTool", m_ApplyGRL);
+        declareProperty("ApplyPRW", m_ApplyPRW);
+        declareProperty("FilterOutput", m_Filter);
+        declareProperty("SaveRecoFlags", m_RecoFlags);
+        m_GrlTool.declarePropertyFor(this, "GRLTool", "The GRLTool");
+        m_prwTool.declarePropertyFor(this, "PileupReweightingTool", "The pile up reweighting tool");
+    }
+    void EventInfo::Lock() {
+        m_Locked = true;
+    }
+    StatusCode EventInfo::initialize() {
+        if (m_Init) {
+            ATH_MSG_WARNING("The event info is already initialized");
+            return StatusCode::SUCCESS;
+        }
+        ATH_MSG_INFO("initialize...");
+        ATH_CHECK(NewEventVariable<char>("PassGRL", !m_Filter));
+        ATH_CHECK(NewEventVariable<char>("HasVtx", !m_Filter));
+        ATH_CHECK(NewEventVariable<char>("passLArTile", !m_Filter));
+        ATH_CHECK(NewEventVariable<int>("Vtx_n", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<int>("PU_Vtx_n", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned long long>("eventNumber"));
+        ATH_CHECK(NewEventVariable<unsigned int>("pixelFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("sctFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("trtFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("larFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("tileFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("muonFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("forwardDetFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("coreFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("backgroundFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("lumiFlags", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<float>("averageInteractionsPerCrossing", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<float>("actualInteractionsPerCrossing", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("runNumber", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("bcid", m_RecoFlags));
+        ATH_CHECK(NewEventVariable<unsigned int>("lumiBlock", m_RecoFlags));
+        ATH_CHECK(m_systematics.retrieve());
+        if (!m_RecoFlags || (m_ApplyPRW && !m_prwTool.retrieve().isSuccess())) {
+            ATH_MSG_INFO("No PileUpRewighting tool has been found. Assume that PRW is switched off for the job");
+            m_ApplyPRW = false;
+        }
+        bool HasGrlTool = m_systematics->isData() && m_ApplyGRL && m_GrlTool.retrieve().isSuccess();
+        if (!HasGrlTool) {
+            ATH_MSG_INFO("No GoodRun selection tool has been found.. Assume the processed file is MC");
+            m_ApplyGRL = false;
+        }
+        if (m_ApplyPRW) {
+            for (auto set : m_systematics->GetWeightSystematics(XAMPP::SelectionObject::EventWeight)) {
+                ATH_CHECK(NewEventVariable<double>("muWeight" + (set->name().empty() ? "" : "_" + set->name()), !m_systematics->isData(), set == m_systematics->GetNominal()));
+                ATH_CHECK(NewEventVariable<float>("corr_avgIntPerX" + (set->name().empty() ? "" : "_" + set->name()), true, set == m_systematics->GetNominal()));
+                ATH_CHECK(NewEventVariable<unsigned int>("RandomRunNumber" + (set->name().empty() ? "" : "_" + set->name()), !m_systematics->isData(), set == m_systematics->GetNominal()));
+                ATH_CHECK(NewEventVariable<unsigned int>("RandomLumiBlockNumber" + (set->name().empty() ? "" : "_" + set->name()), !m_systematics->isData(), set == m_systematics->GetNominal()));
+                PileUpDecorators Decorator;
+                Decorator.RandomRunNumber = GetVariableStorage<unsigned int>("RandomRunNumber" + (set->name().empty() ? "" : "_" + set->name()));
+                Decorator.RandomLumiBlock = GetVariableStorage<unsigned int>("RandomLumiBlockNumber" + (set->name().empty() ? "" : "_" + set->name()));
+                Decorator.muWeight = GetVariableStorage<double>("muWeight" + (set->name().empty() ? "" : "_" + set->name()));
+                Decorator.AverageCross = GetVariableStorage<float>("corr_avgIntPerX" + (set->name().empty() ? "" : "_" + set->name()));
+                m_DecPup.insert(std::pair<const CP::SystematicSet*, PileUpDecorators>(set, Decorator));
+            }
+        }
+        m_PassGRL = GetVariableStorage<char>("PassGRL");
+        m_PassLArTile = GetVariableStorage<char>("passLArTile");
+        m_HasVtx = GetVariableStorage<char>("HasVtx");
+        m_nNVtx = GetVariableStorage<int>("Vtx_n");
+        m_nPU_Vtx = GetVariableStorage<int>("PU_Vtx_n");
+        //m_nPVtx = GetVariableStorage<int>("PVtx_n");
+
+        m_Init = true;
+#ifdef XAOD_STANDALONE
+        this->msg().setLevel(XAMPP::setOutputLevel(m_output_level));
+#endif
+        return StatusCode::SUCCESS;
+    }
+    StatusCode EventInfo::LoadInfo() {
+        m_ActSys = nullptr;
+        m_EvtInfo = nullptr;
+        m_primaryVtx = nullptr;
+        ATH_CHECK(evtStore()->retrieve(m_ConstEvtInfo, "EventInfo"));
+        //Cache the vertex and determine the cleaning
+        ATH_CHECK(FindPrimaryFertex());
+        ATH_CHECK(m_PassGRL->ConstStore((!m_ApplyGRL || isMC() || m_GrlTool->passRunLB(*m_ConstEvtInfo))));
+        bool PassLAR = (isMC() || !((m_ConstEvtInfo->errorState(xAOD::EventInfo::LAr) == xAOD::EventInfo::Error) || (m_ConstEvtInfo->errorState(xAOD::EventInfo::Tile) == xAOD::EventInfo::Error) || (m_ConstEvtInfo->errorState(xAOD::EventInfo::SCT) == xAOD::EventInfo::Error) || (m_ConstEvtInfo->eventFlags(xAOD::EventInfo::Core) & 0x40000))); //core flag checks??
+        ATH_CHECK(m_PassLArTile->ConstStore(PassLAR));
+        ATH_CHECK(ApplyPrW());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode EventInfo::SetSystematic(const CP::SystematicSet* set) {
+        if (m_ActSys == set) return StatusCode::SUCCESS;
+        m_ActSys = set;
+        //Check if the current systematic affects the kinematics-> otherwise return Nominal Info
+        for (const auto s : m_systematics->GetKinematicSystematics())
+            if (s == set) return GetInfoFromStore(set);
+        ATH_MSG_WARNING("The systematic " << set->name() << " is not part of the kinematics. Load the nominal container");
+        return GetInfoFromStore(m_systematics->GetNominal());
+    }
+    StatusCode EventInfo::GetInfoFromStore(const CP::SystematicSet* set) {
+        if (set == nullptr) {
+            ATH_MSG_ERROR("The systematic set pointer is nullptr");
+            return StatusCode::FAILURE;
+        }
+        //The Info Object is already given in the Event Store
+        std::string storeName = name() + "EvI" + set->name();
+        if (evtStore()->contains < xAOD::EventInfo > (storeName)) {
+            ATH_CHECK(evtStore()->retrieve(m_EvtInfo, storeName));
+            return StatusCode::SUCCESS;
+        }
+
+        //Create a new object and copy the information from the original to the new container
+        xAOD::EventInfo* NevInfo = new xAOD::EventInfo();
+        NevInfo->makePrivateStore(m_ConstEvtInfo);
+        ATH_CHECK(evtStore()->record(NevInfo, storeName));
+        m_EvtInfo = NevInfo;
+        return StatusCode::SUCCESS;
+    }
+    StatusCode EventInfo::FindPrimaryFertex() {
+        ATH_CHECK(m_HasVtx->ConstStore(!m_RecoFlags));
+        ATH_CHECK(m_nNVtx->ConstStore(0));
+        ATH_CHECK(m_nPU_Vtx->ConstStore(0));
+        //ATH_CHECK(m_nPVtx->ConstStore(0));
+        if (!m_RecoFlags) {
+            ATH_MSG_DEBUG("No reco flags required");
+            return StatusCode::SUCCESS;
+        }
+        const xAOD::VertexContainer* primVertices = 0;
+        ATH_CHECK(evtStore()->retrieve(primVertices, "PrimaryVertices"));
+        if (primVertices->size() == 0) {
+            ATH_MSG_DEBUG("Found no PV candidate for IP computation!");
+            return StatusCode::SUCCESS;
+        }
+        unsigned int Vtx_n = 0;
+        unsigned int PU_Vtx_n = 0;
+        //unsigned int PVtx_n = 0;
+        const xAOD::Vertex* pileup = 0;
+        int trackn = 0;
+        int pileup_vertices = 0;
+        for (const auto &vx : *primVertices) {
+            if (vx->vertexType() == xAOD::VxType::PriVtx) {
+                if (m_primaryVtx) ATH_MSG_WARNING("Found already a primary vertex with z=" << m_primaryVtx->z());
+                m_primaryVtx = vx;
+                
+            }
+            if (vx->vertexType() == xAOD::VxType::PriVtx || vx->vertexType() == xAOD::VxType::PileUp) ++Vtx_n;
+            if (vx->vertexType() == xAOD::VxType::PileUp) {
+            	++PU_Vtx_n;
+            	pileup = vx;
+            	if ( (int)pileup -> nTrackParticles() > trackn ) trackn = pileup->nTrackParticles();
+            	if (trackn > 6) pileup_vertices = 1;
+            	}
+            //if (vx->vertexType() == xAOD::VxType::PriVtx ) ++PVtx_n;
+        }
+        ATH_MSG_DEBUG("Primary vertex found with z=" << m_primaryVtx->z());
+        ATH_CHECK(m_HasVtx->ConstStore(m_primaryVtx != nullptr));
+        ATH_CHECK(m_nNVtx->ConstStore(Vtx_n));
+        ATH_CHECK(m_nPU_Vtx->ConstStore(PU_Vtx_n));
+        //ATH_CHECK(m_nPVtx->ConstStore(PVtx_n));
+        return StatusCode::SUCCESS;
+    }
+    StatusCode EventInfo::ApplyPrW() {
+        static UIntAccessor acc_Random("RandomRunNumber");
+        static UIntDecorator dec_Random("RandomRunNumber");
+
+        static UIntAccessor acc_Lumi("RandomLumiBlockNumber");
+        static FloatAccessor acc_PuW("PileupWeight");
+        static FloatAccessor acc_CaX("corrected_averageInteractionsPerCrossing");
+
+        if (!m_ApplyPRW) {
+            //Overwrite the random runnumber with the current runNumber
+            if (isMC()) dec_Random(*GetOrigInfo()) = runNumber();
+            return StatusCode::SUCCESS;
+        }
+        for (auto set : m_systematics->GetWeightSystematics(XAMPP::SelectionObject::EventWeight)) {
+            std::map<const CP::SystematicSet*, PileUpDecorators>::iterator Itr = m_DecPup.find(set);
+            if (Itr == m_DecPup.end()) {
+                ATH_MSG_ERROR("Could not find prw decoration for systematic " << set->name());
+                return StatusCode::FAILURE;
+            }
+            PileUpDecorators& Decorator = Itr->second;
+
+            ATH_CHECK(m_systematics->setSystematic(set));
+            ATH_CHECK(m_prwTool->apply(*m_ConstEvtInfo));
+            if (acc_CaX.isAvailable(*m_ConstEvtInfo)) ATH_CHECK(Decorator.AverageCross->ConstStore(acc_CaX(*m_ConstEvtInfo)));
+            else ATH_CHECK(Decorator.AverageCross->ConstStore(m_ConstEvtInfo->averageInteractionsPerCrossing()));
+            if (isMC()) {
+                ATH_CHECK(Decorator.muWeight->ConstStore(isnan(acc_PuW(*m_ConstEvtInfo)) ? 1. : acc_PuW(*m_ConstEvtInfo)));
+                ATH_CHECK(Decorator.RandomRunNumber->ConstStore(acc_Random(*m_ConstEvtInfo)));
+                ATH_CHECK(Decorator.RandomLumiBlock->ConstStore(acc_Lumi(*m_ConstEvtInfo)));
+            }
+        }
+        return StatusCode::SUCCESS;
+    }
+    StatusCode EventInfo::CopyInfoFromNominal(const CP::SystematicSet* To) {
+        if (To == m_systematics->GetNominal()) {
+            ATH_MSG_ERROR("Cannot copy the nominal EventInfo to itself");
+            return StatusCode::SUCCESS;
+        }
+        ATH_CHECK(GetInfoFromStore(m_systematics->GetNominal()));
+        xAOD::EventInfo* NominalInfo = m_EvtInfo;
+        ATH_CHECK(GetInfoFromStore(To));
+        *m_EvtInfo = *NominalInfo;
+        return StatusCode::SUCCESS;
+    }
+    StatusCode EventInfo::BookParticleStorage(const std::string &Name, bool StoreMass, bool SaveVariations) {
+        if (StorageKeeper::GetInstance()->ParticleDefined(Name, this)) {
+            ATH_MSG_ERROR("Error there has already been booked a particle Storage " << Name);
+            return StatusCode::FAILURE;
+        }
+        if (m_Locked) {
+            ATH_MSG_ERROR("The stoarge " << Name << " cannot be booked. Since the info is initialized");
+            return StatusCode::FAILURE;
+        }
+        ATH_MSG_INFO("Book new branches to store particles " << Name);
+        ParticleStorage* S = new ParticleStorage(Name, this);
+        S->SetSaveVariations(SaveVariations);
+        S->SaveMassInP4(StoreMass);
+        S->SetSaveTrees(true);
+        return StatusCode::SUCCESS;
+    }
+    ParticleStorage* EventInfo::GetParticleStorage(const std::string &Name) const {
+        if (!StorageKeeper::GetInstance()->ParticleDefined(Name, this)) {
+            ATH_MSG_WARNING("The ParticleStorage " << Name << " does not exist");
+            return nullptr;
+        }
+        return StorageKeeper::GetInstance()->RetrieveParticleStorage(Name, this);
+    }
+    std::vector<ParticleStorage*> EventInfo::GetParticleStorages(OutputElement e, bool NominalOnly) const {
+        std::vector<ParticleStorage*> out;
+        std::vector<ParticleStorage*> in = StorageKeeper::GetInstance()->GetParticleStores(this);
+        for (auto& entry : in) {
+            if (NominalOnly && !entry->SaveVariations()) continue;
+            if (e == OutputElement::Tree && entry->SaveTrees()) out.push_back(entry);
+            if (e == OutputElement::Histo && entry->SaveHistos()) out.push_back(entry);
+        }
+        return out;
+
+    }
+    bool EventInfo::isMC() const {
+        if (!GetOrigInfo()) {
+            ATH_MSG_WARNING("Currently no event is loaded");
+            return false;
+        }
+        return GetOrigInfo()->eventType(xAOD::EventInfo::IS_SIMULATION);
+    }
+    const xAOD::EventInfo* EventInfo::GetOrigInfo() const {
+        return m_ConstEvtInfo;
+    }
+    const CP::SystematicSet* EventInfo::GetSystematic() const {
+        return m_ActSys;
+    }
+    EventInfo::~EventInfo() {
+        ATH_MSG_DEBUG("Destructor called");
+    }
+    unsigned long long EventInfo::eventNumber() const {
+        return GetOrigInfo()->eventNumber();
+    }
+    int EventInfo::mcChannelNumber() const {
+        if (!isMC()) {
+            ATH_MSG_WARNING("Invalid access of the mcChannelNumber. Return -1");
+            return -1;
+        }
+        return m_ConstEvtInfo->mcChannelNumber() ? m_ConstEvtInfo->mcChannelNumber() : runNumber();
+    }
+    double EventInfo::GetGenWeight(unsigned int idx) const {
+        if (m_ConstEvtInfo && m_ConstEvtInfo->mcEventWeights().size() > idx) return (*(m_ConstEvtInfo->mcEventWeights().begin() + idx));
+        ATH_MSG_WARNING("The current event has no mcWeight saved. Return 1.");
+        return 1.;
+    }
+    unsigned int EventInfo::runNumber() const {
+        return m_ConstEvtInfo->runNumber();
+    }
+    xAOD::EventInfo* EventInfo::GetEventInfo() const {
+        return m_EvtInfo;
+    }
+    bool EventInfo::PassCleaning() const {
+        if (!m_Filter) {
+            ATH_MSG_DEBUG("Filter disabled");
+            return true;
+        }
+        if (!m_PassGRL->GetValue()) {
+            ATH_MSG_DEBUG("Failed GRL application");
+            return false;
+        }
+        if (!m_PassLArTile->GetValue()) {
+            ATH_MSG_DEBUG("Tile is not working");
+            return false;
+        }
+        if (!m_HasVtx->GetValue()) {
+            ATH_MSG_DEBUG("Has no vertex");
+            return false;
+        }
+        return true;
+    }
+
+    const xAOD::Vertex* EventInfo::GetPrimaryVertex() const {
+        if (!m_primaryVtx) {
+            ATH_MSG_WARNING("No vertex could be found");
+        }
+        return m_primaryVtx;
+    }
+
+}

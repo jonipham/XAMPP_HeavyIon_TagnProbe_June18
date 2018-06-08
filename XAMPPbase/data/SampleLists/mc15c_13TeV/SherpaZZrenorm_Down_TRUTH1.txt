@@ -1,0 +1,2 @@
+mc15_13TeV.363045.Sherpa_CT10_llll_renorm025.merge.DAOD_TRUTH1.e4681_p2756/
+mc15_13TeV.363081.Sherpa_CT10_ggllll_renorm025.merge.DAOD_TRUTH1.e4681_p2756/

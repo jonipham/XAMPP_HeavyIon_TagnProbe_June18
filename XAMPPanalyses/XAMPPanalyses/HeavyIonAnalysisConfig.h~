@@ -1,0 +1,20 @@
+#ifndef JVTAnalysisConfig_h
+#define JVTAnalysisConfig_h
+#include <XAMPPbase/AnalysisConfig.h>
+
+namespace XAMPP {
+    class JVTAnalysisConfig: public AnalysisConfig {
+
+        public:
+            ASG_TOOL_CLASS(JVTAnalysisConfig, XAMPP::IAnalysisConfig)
+
+            JVTAnalysisConfig(std::string Analysis = "JVT");
+            virtual ~JVTAnalysisConfig() {
+            }
+
+        protected:
+            virtual StatusCode initializeCustomCuts();
+
+    };
+}
+#endif

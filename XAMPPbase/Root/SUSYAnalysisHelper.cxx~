@@ -1,0 +1,756 @@
+#include <XAMPPbase/AnalysisConfig.h>
+#include <XAMPPbase/EventInfo.h>
+#include <XAMPPbase/MetaDataTree.h>
+#include <XAMPPbase/SUSYAnalysisHelper.h>
+#include <XAMPPbase/ReconstructedParticles.h>
+#include <XAMPPbase/SUSYElectronSelector.h>
+#include <XAMPPbase/SUSYJetSelector.h>
+#include <XAMPPbase/SUSYMetSelector.h>
+#include <XAMPPbase/SUSYMuonSelector.h>
+#include <XAMPPbase/SUSYPhotonSelector.h>
+#include <XAMPPbase/SUSYTauSelector.h>
+#include <XAMPPbase/SUSYTruthSelector.h>
+#include <XAMPPbase/SUSYTriggerTool.h>
+#include <XAMPPbase/SUSYSystematics.h>
+#include <XAMPPbase/CxAODMaker.h>
+#include <XAMPPbase/HistoBase.h>
+#include <XAMPPbase/TreeBase.h>
+
+//Tool includes
+#include <SUSYTools/SUSYCrossSection.h>
+
+#include <PATInterfaces/SystematicSet.h>
+#include "PATInterfaces/CorrectionCode.h"
+
+#include <GoodRunsLists/GoodRunsListSelectionTool.h>
+#include <PathResolver/PathResolver.h>
+
+#include <SUSYTools/SUSYObjDef_xAOD.h>
+#include <AsgTools/StatusCode.h>
+
+//#include <JetCPInterfaces/IJetTileCorrectionTool.h>
+
+#ifndef XAOD_STANDALONE
+#include <GaudiKernel/ITHistSvc.h>
+//#include "AthAnalysisBaseComps/AthAnalysisHelper.h"
+#endif
+
+#define SET_DUAL_TOOL( TOOLHANDLE, TOOLTYPE, TOOLNAME )                \
+  ASG_SET_ANA_TOOL_TYPE(TOOLHANDLE, TOOLTYPE);                        \
+  TOOLHANDLE.setName(TOOLNAME);
+
+#include <iostream>
+#include <fstream>
+
+namespace XAMPP {
+    SUSYAnalysisHelper::SUSYAnalysisHelper(std::string myname) :
+                AsgMetadataTool(myname),
+                m_electron_selection("SUSYElectronSelector"),
+                m_jet_selection("SUSYJetSelector"),
+                m_met_selection("SUSYMetSelector"),
+                m_muon_selection("SUSYMuonSelector"),
+                m_photon_selection("SUSYPhotonSelector"),
+                m_tau_selection("SUSYTauSelector"),
+                m_truth_selection("SUSYTruthSelector"),
+                m_systematics("SystematicsTool"),
+                m_triggers("TriggerTool"),
+                m_susytools("SUSYTools"),
+#ifdef XAOD_STANDALONE
+                m_config_name("SUSYAnalysisConfig"),
+                m_output_level(MSG::INFO),
+                m_output_level_ST(MSG::ERROR),
+#endif
+                m_init(false),
+                m_RunCutFlow(true),
+                m_UseFileMetadata(true),
+                m_doHistos(true),
+                m_doTrees(true),
+                m_doxAODs(false),
+                m_doTruth(true),
+                m_doPRW(true),
+                m_isAF2(false),
+                m_StoreRecoFlags(true),
+                m_CleanEvent(true),
+                m_CleanBadMuon(true),
+                m_CleanCosmicMuon(true),
+                m_CleanBadJet(true),
+#ifdef XAOD_STANDALONE
+                m_OutFileName(""),
+                m_outFile(0),
+#else
+                m_histSvc("THistSvc", myname),
+#endif
+                m_FillLHEWeights(false),
+                m_LHEWeights(),
+                m_dec_NumBadMuon(0),
+                m_decNumBadJet(0),
+                m_decNumCosmicMuon(0),
+                m_GoodRunsListVec(),
+                m_PRWConfigFiles(),
+                m_PRWLumiCalcFiles(),
+#ifdef XAOD_STANDALONE
+                m_GoodRunsListVec_string(""),
+                m_PRWConfigFiles_string(""),
+                m_PRWLumiCalcFiles_string(""),
+#endif
+                m_XsecDB(0),
+                m_histoVec(),
+                m_treeVec(),
+                m_config("AnalysisConfig"),
+                m_InfoHandle("EventInfoHandler"),
+                m_MDTree("MetaDataTree"),
+                m_grl("GoodRunsListSelectionTool"),
+                m_ParticleConstructor("ParticleConstructor"),
+                m_XAMPPInfo(0),
+                m_InDetTracksName("InDetTrackParticles"),
+                m_OutxAOD(0) {
+
+        //Tool properties
+        declareProperty("ElectronSelector", m_electron_selection);
+        declareProperty("JetSelector", m_jet_selection);
+        declareProperty("MetSelector", m_met_selection);
+        declareProperty("MuonSelector", m_muon_selection);
+        declareProperty("PhotonSelector", m_photon_selection);
+        declareProperty("TauSelector", m_tau_selection);
+        declareProperty("TruthSelector", m_truth_selection);
+        declareProperty("SystematicsTool", m_systematics);
+        declareProperty("TriggerTool", m_triggers);
+        declareProperty("AnalysisConfig", m_config);
+        m_susytools.declarePropertyFor(this, "SUSYTools", "The SUSYTools instance");
+        m_InfoHandle.declarePropertyFor(this, "EventInfoHandler", "The XAMPP EventInfo handle");
+        m_MDTree.declarePropertyFor(this, "MetaDataTree", "The XAMPP metadata tree");
+        m_grl.declarePropertyFor(this, "GRLTool", "The GRLTool");
+        m_ParticleConstructor.declarePropertyFor(this, "ParticleConstructor", "The XAMPP particle constuctor");
+
+#ifdef XAOD_STANDALONE
+        //Name of the analysis config such that one can retrieve it from the ToolStore
+        declareProperty("AnalysisConfigName", m_config_name);
+        declareProperty("OutputLevel", m_output_level);
+        declareProperty("OutputLevelSUSYTools", m_output_level_ST);
+#endif
+        // I/O properties
+        declareProperty("RunCutFlow", m_RunCutFlow);
+        declareProperty("UseFileMetaData", m_UseFileMetadata);
+
+        declareProperty("doHistos", m_doHistos);
+        declareProperty("doTrees", m_doTrees);
+        declareProperty("doxAODs", m_doxAODs);
+
+        declareProperty("doTruth", m_doTruth);
+        declareProperty("doPRW", m_doPRW);
+        declareProperty("isAF2", m_isAF2);
+
+        //properties related to the object cleaning
+        declareProperty("EventCleaning", m_CleanEvent);
+        declareProperty("BadMuonCleaning", m_CleanBadMuon);
+        declareProperty("CosmicMuonCleaning", m_CleanCosmicMuon);
+        declareProperty("BadJetCleaning", m_CleanBadJet);
+        //fill the weights of the LHE variations
+        //only for recent derivations avilable
+        declareProperty("fillLHEWeights", m_FillLHEWeights);
+#ifdef XAOD_STANDALONE
+        declareProperty("OutFileName", m_OutFileName = "AnalysisOutput.root");
+        declareProperty("GoodRunsListVecString", m_GoodRunsListVec_string = "");
+        declareProperty("PRWConfigFilesString", m_PRWConfigFiles_string = "");
+        declareProperty("PRWLumiCalcFilesString", m_PRWLumiCalcFiles_string = "");
+#endif
+        // SUSYTools properties and settings
+        declareProperty("STConfigFile", m_STConfigFile = "SUSYTools/SUSYTools_Default.conf");
+        declareProperty("STCrossSectionDB", m_XsecDBDir = "SUSYTools/mc15_13TeV/");
+        declareProperty("GoodRunsLists", m_GoodRunsListVec);
+        declareProperty("PRWConfigFiles", m_PRWConfigFiles);
+        declareProperty("PRWLumiCalcFiles", m_PRWLumiCalcFiles);
+        declareProperty("InDetTracksName", m_InDetTracksName);
+    }
+
+    SUSYAnalysisHelper::~SUSYAnalysisHelper() {
+        for (auto& Histo : m_histoVec)
+            if (Histo.second != NULL) delete Histo.second;
+        for (auto& Tree : m_treeVec)
+            if (Tree.second != NULL) delete Tree.second;
+        if (m_XsecDB != NULL) delete m_XsecDB;
+        if (m_OutxAOD != NULL) delete m_OutxAOD;
+        m_histoVec.clear();
+        m_treeVec.clear();
+        ATH_MSG_DEBUG("Destructor called");
+
+    }
+    StatusCode SUSYAnalysisHelper::initializeSUSYTools() {
+#ifdef XAOD_STANDALONE
+        XAMPP::FillVectorFromString(m_PRWConfigFiles, m_PRWConfigFiles_string);
+        XAMPP::FillVectorFromString(m_PRWLumiCalcFiles, m_PRWLumiCalcFiles_string);
+#endif
+
+        if (!m_susytools.isUserConfigured()) {
+            ATH_MSG_INFO("Setup new instance of SUSYTools");
+            ST::ISUSYObjDef_xAODTool::DataSource datasource = isData() ? ST::ISUSYObjDef_xAODTool::DataSource::Data : (m_isAF2 ? ST::ISUSYObjDef_xAODTool::DataSource::AtlfastII : ST::ISUSYObjDef_xAODTool::DataSource::FullSim);
+            SET_DUAL_TOOL(m_susytools, ST::SUSYObjDef_xAOD, "SUSYTools");
+            ATH_CHECK(m_susytools.setProperty("ConfigFile", PathResolverFindCalibFile(m_STConfigFile)));
+            if (m_PRWConfigFiles.empty() && m_PRWLumiCalcFiles.empty()) ATH_MSG_DEBUG("No prw files were given. Will not initialize the prw tool");
+            else if (!m_PRWConfigFiles.empty() && !m_PRWLumiCalcFiles.empty()) {
+                ATH_CHECK(m_susytools.setProperty("PRWConfigFiles", GetPathResolvedFileList(m_PRWConfigFiles)));
+                ATH_CHECK(m_susytools.setProperty("PRWLumiCalcFiles", GetPathResolvedFileList(m_PRWLumiCalcFiles)));
+            } else {
+                ATH_MSG_WARNING("Either the config files or lumi calc files are not given");
+                m_doPRW = false;
+            }
+
+#ifdef XAOD_STANDALONE
+            ATH_CHECK(m_susytools.setProperty("DataSource" ,datasource));
+#else
+            ATH_CHECK(m_susytools.setProperty("DataSource", (int) datasource));
+#endif
+            ATH_CHECK(m_susytools.initialize());
+#ifdef XAOD_STANDALONE
+            SUSYToolsPtr()->msg().setLevel(XAMPP::setOutputLevel(m_output_level_ST));
+#endif
+
+        } else {
+            ATH_CHECK(m_susytools.retrieve());
+        }
+        SUSYToolsSystematicToolHandle* SUSYToolsHandle = new SUSYToolsSystematicToolHandle(m_susytools);
+
+        ATH_CHECK(SUSYToolsHandle->initialize());
+        m_PRWConfigFiles.clear();
+        m_PRWLumiCalcFiles.clear();
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::initializeGRLTool() {
+        ATH_MSG_DEBUG("Initialize the GRL tool");
+#ifdef XAOD_STANDALONE
+        XAMPP::FillVectorFromString(m_GoodRunsListVec, m_GoodRunsListVec_string);
+#endif
+        if (isData() && !m_GoodRunsListVec.empty()) {
+            m_doTruth = false;
+            if (!m_grl.isUserConfigured()) {
+                ATH_MSG_DEBUG("Setup the GRL tool");
+                SET_DUAL_TOOL(m_grl, GoodRunsListSelectionTool, "GoodRunsListSelectionTool");
+                ATH_CHECK(m_grl.setProperty("PassThrough", false));
+                ATH_CHECK(m_grl.setProperty("GoodRunsListVec", GetPathResolvedFileList(m_GoodRunsListVec)));
+            }
+            ATH_CHECK(m_grl->initialize());
+        }
+        m_GoodRunsListVec.clear();
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::initializeAnalysisTools() {
+        ATH_MSG_INFO("Starting Analysis Setup");
+        ATH_CHECK(initializeSUSYTools());
+        ATH_CHECK(initializeGRLTool());
+        return StatusCode::SUCCESS;
+    }
+
+    StatusCode SUSYAnalysisHelper::initialize() {
+        if (m_init) {
+            return StatusCode::SUCCESS;
+        }
+        m_init = true;
+        CP::CorrectionCode::enableFailure();
+#ifdef XAOD_STANDALONE
+        StatusCode::enableFailure();
+        this->msg().setLevel(XAMPP::setOutputLevel(m_output_level));
+        m_outFile = new TFile(m_OutFileName.c_str(), "RECREATE");
+        if (!m_outFile || !m_outFile->IsOpen()) {
+            ATH_MSG_FATAL("Could not create output file " << m_OutFileName << ", exiting...");
+            return StatusCode::FAILURE;
+        }
+#endif
+        ATH_MSG_INFO("Initializing...");
+        ATH_CHECK(m_systematics.retrieve());
+        ATH_MSG_DEBUG("initialize the analysis tools");
+        ATH_CHECK(initializeAnalysisTools());
+        ATH_MSG_DEBUG("Fix the systematics tool");
+        ATH_CHECK(m_systematics->FixSystematics());
+
+        if (!m_InfoHandle.isUserConfigured()) {
+            ATH_MSG_DEBUG("Create the event info");
+            SET_DUAL_TOOL(m_InfoHandle, XAMPP::EventInfo, "EventInfoHandler");
+            ATH_CHECK(m_InfoHandle.setProperty("ApplyPRW", m_doPRW));
+            ATH_CHECK(m_InfoHandle.setProperty("ApplyGRLTool", !m_GoodRunsListVec.empty()));
+            ATH_CHECK(m_InfoHandle.setProperty("FilterOutput", m_CleanEvent));
+            ATH_CHECK(m_InfoHandle.setProperty("SaveRecoFlags", m_StoreRecoFlags));
+            m_XAMPPInfo = dynamic_cast<XAMPP::EventInfo*>(m_InfoHandle.operator->());
+        } else {
+            ATH_CHECK(m_InfoHandle.retrieve());
+            m_XAMPPInfo = dynamic_cast<XAMPP::EventInfo*>(m_InfoHandle.operator->());
+        }
+
+        if (!isData()) {
+            ATH_MSG_DEBUG("Setup the cross section database");
+            m_XsecDB = new SUSY::CrossSectionDB(PathResolverFindCalibDirectory(m_XsecDBDir));
+        } else m_doTruth = false;
+
+        if (!m_MDTree.isUserConfigured()) {
+            ATH_MSG_DEBUG("Create new metadata tree");
+            SET_DUAL_TOOL(m_MDTree, XAMPP::MetaDataTree, "MetaDataTree");
+            ATH_CHECK(m_MDTree.setProperty("isData", isData()));
+            ATH_CHECK(m_MDTree.setProperty("useFileMetaData", m_UseFileMetadata));
+            ATH_CHECK(m_MDTree.setProperty("TreeName", "MetaDataTree"));
+#ifdef XAOD_STANDALONE
+            ATH_CHECK(m_MDTree.setProperty("OutputFile", m_outFile));
+#endif
+        } else {
+            ATH_MSG_DEBUG("Use configured meta data tree");
+#ifdef XAOD_STANDALONE
+            asg::AsgTool* MDTree = dynamic_cast<asg::AsgTool*>(m_MDTree.operator->());
+            ATH_CHECK(MDTree->setProperty("OutputFile", m_outFile));
+#endif
+        }
+
+        ATH_CHECK(m_MDTree.retrieve());
+        if (!m_ParticleConstructor.isUserConfigured()) {
+            ATH_MSG_DEBUG("Create class for handling of the reconstructed particles like Z, W, top candidates");
+            SET_DUAL_TOOL(m_ParticleConstructor, XAMPP::ReconstructedParticles, "ParticleConstructor");
+            ATH_CHECK(m_ParticleConstructor->initialize());
+        }
+        ATH_CHECK(initializeObjectTools());
+        // Initialize the event weights in MC
+        if (!isData()) {
+            ATH_CHECK(m_XAMPPInfo->NewCommonEventVariable<int>("SUSYFinalState"));
+            ATH_CHECK(m_XAMPPInfo->NewCommonEventVariable<int>("SUSY_procID", false));
+            ATH_CHECK(m_XAMPPInfo->NewCommonEventVariable<double>("GenWeight"));
+            if (m_FillLHEWeights) {
+#ifdef XAOD_STANDALONE
+                const xAOD::EventInfo* Info;
+                ATH_CHECK(evtStore()->retrieve(Info, "EventInfo"));
+                ATH_CHECK( evtStore()->retrieve(p_Tracks, m_InDetTracksName) );
+                for (size_t E = Info->mcEventWeights().size() - 1; E > 0; --E) {
+#else
+//                std::
+                for (size_t E = 1; E > 0; --E) {
+#endif
+                    std::string WeightName = "GenWeight_LHE_" + std::to_string(E + 1000);
+                    ATH_CHECK(m_XAMPPInfo->NewEventVariable<double>(WeightName));
+                    m_LHEWeights.insert(std::pair<unsigned int, XAMPP::Storage<double>*>(E, m_XAMPPInfo->GetVariableStorage<double>(WeightName)));
+                }
+            }
+        }
+        ATH_CHECK(initializeEventVariables()); //Overload this function in order to add event variables to your output files
+
+// -----------------
+// ATTENTION!!!
+        ATH_CHECK(m_XAMPPInfo->initialize()); // Event variables must not be added after that line!!
+        m_XAMPPInfo->Lock();
+// ATTENTION!!!
+// -----------------
+        // Check if there is an analysis config in the tool store, which contains all information about your cut configuration...
+#ifdef XAOD_STANDALONE
+        if (!m_config.isSet()) {
+            m_config.setName(m_config_name);
+        }
+#endif
+        ATH_CHECK(m_config.retrieve());
+
+        ATH_CHECK(m_config->initialize());
+
+        for (auto current_syst : m_systematics->GetKinematicSystematics()) {
+            HistoBase* histo = CreateHistoClass(current_syst);
+            ATH_CHECK(initHistoClass(histo));
+            m_histoVec.insert(std::pair<const CP::SystematicSet *, HistoBase *>(current_syst, histo));
+            if (m_doTrees) {
+                TreeBase* tree = CreateTreeClass(current_syst);
+                ATH_CHECK(initTreeClass(tree));
+                m_treeVec.insert(std::pair<const CP::SystematicSet *, TreeBase *>(current_syst, tree));
+            }
+        }
+        if (!m_doTrees) {
+            std::vector<ParticleStorage*> ParticleStores = m_XAMPPInfo->GetParticleStorages();
+            for (auto& P : ParticleStores)
+                P->DisableTree();
+        }
+        if (m_doxAODs) {
+#ifdef XAOD_STANDALONE
+            ATH_MSG_INFO("Write out CxAODs");
+            m_OutxAOD = new XAMPP::CxAODMaker("CxAODWriter");
+            ATH_CHECK(m_OutxAOD->setProperty("OutputFile", m_outFile));
+            ATH_CHECK(m_OutxAOD->setProperty("AnalysisConfigName" , m_config_name));
+            ATH_CHECK(m_OutxAOD->setProperty("ElectronSelector", m_electron_selection));
+            ATH_CHECK(m_OutxAOD->setProperty("JetSelector", m_jet_selection));
+            ATH_CHECK(m_OutxAOD->setProperty("MetSelector", m_met_selection));
+            ATH_CHECK(m_OutxAOD->setProperty("MuonSelector", m_muon_selection));
+            ATH_CHECK(m_OutxAOD->setProperty("PhotonSelector", m_photon_selection));
+            ATH_CHECK(m_OutxAOD->setProperty("TauSelector", m_tau_selection));
+            ATH_CHECK(m_OutxAOD->setProperty("TruthSelector", m_truth_selection));
+            ATH_CHECK(m_OutxAOD->initialize());
+#endif
+        }
+        ATH_MSG_INFO("Current info: isData: " << isData() << ", isAF2: " << m_isAF2 << ", doTruth: " << m_doTruth << ", doPRW: " << m_doPRW);
+        return StatusCode::SUCCESS;
+    }
+
+    StatusCode SUSYAnalysisHelper::initializeObjectTools() {
+
+        if (!isData()) ATH_CHECK(m_truth_selection.retrieve());
+        ATH_CHECK(m_triggers.retrieve());
+
+        ATH_CHECK(m_electron_selection.retrieve());
+        ATH_CHECK(m_muon_selection.retrieve());
+        ATH_CHECK(m_jet_selection.retrieve());
+
+        ATH_CHECK(m_photon_selection.retrieve());
+        ATH_CHECK(m_tau_selection.retrieve());
+
+        ATH_CHECK(m_met_selection.retrieve());
+
+        //The XAMPP particle selectors are protected against the
+        //arbitray initialization of athena
+
+        ATH_CHECK(m_triggers->initialize());
+
+        ATH_CHECK(m_electron_selection->initialize());
+        ATH_CHECK(m_muon_selection->initialize());
+        ATH_CHECK(m_jet_selection->initialize());
+        ATH_CHECK(m_photon_selection->initialize());
+        ATH_CHECK(m_tau_selection->initialize());
+        if (!isData()) ATH_CHECK(m_truth_selection->initialize());
+        CleaningForOutput("BadMuon", m_dec_NumBadMuon, m_CleanBadMuon);
+        CleaningForOutput("CosmicMuon", m_decNumCosmicMuon, m_CleanCosmicMuon);
+        CleaningForOutput("BadJet", m_decNumBadJet, m_CleanBadJet);
+
+        ATH_CHECK(m_met_selection->initialize());
+
+        return StatusCode::SUCCESS;
+    }
+    void SUSYAnalysisHelper::CleaningForOutput(const std::string& DecorName, XAMPP::Storage<int>* &Store, bool DoCleaning) {
+        if (m_XAMPPInfo->DoesVariableExist<int>(DecorName)) {
+            Store = m_XAMPPInfo->GetVariableStorage<int>(DecorName);
+            Store->SetSaveTrees(!DoCleaning);
+            Store->SetSaveVariations(!DoCleaning);
+        }
+    }
+    StatusCode SUSYAnalysisHelper::initTreeClass(TreeBase* TreeClass) {
+#ifdef XAOD_STANDALONE
+        TreeClass->SetOutFile(m_outFile);
+#endif
+        TreeClass->SetEventInfoHandler(m_InfoHandle.getHandle());
+        TreeClass->SetSystematicsTool(m_systematics);
+        TreeClass->SetAnalysisConfig(m_config);
+        return TreeClass->InitializeTree();
+    }
+    StatusCode SUSYAnalysisHelper::initHistoClass(HistoBase* HistoClass) {
+#ifdef XAOD_STANDALONE
+        HistoClass->SetOutFile(m_outFile);
+#endif
+        HistoClass->SetEventInfoHandler(m_InfoHandle.getHandle());
+        HistoClass->SetSystematicsTool(m_systematics);
+        HistoClass->SetAnalysisConfig(m_config);
+        HistoClass->SetDoHistos(m_doHistos);
+        HistoClass->WriteCutFlow(m_RunCutFlow);
+
+        return HistoClass->InitializeHistos();
+    }
+
+    StatusCode SUSYAnalysisHelper::LoadContainers() {
+        ATH_MSG_DEBUG("Load all containers from the Store gate");
+        ATH_CHECK(m_XAMPPInfo->LoadInfo());
+        ATH_MSG_DEBUG("Electrons...");
+        ATH_CHECK(m_electron_selection->LoadContainers());
+        ATH_MSG_DEBUG("Muons...");
+        ATH_CHECK(m_muon_selection->LoadContainers());
+        ATH_MSG_DEBUG("Jets...");
+        ATH_CHECK(m_jet_selection->LoadContainers());
+        ATH_MSG_DEBUG("Taus...");
+        ATH_CHECK(m_tau_selection->LoadContainers());
+        ATH_MSG_DEBUG("Photons...");
+        ATH_CHECK(m_photon_selection->LoadContainers());
+        ATH_MSG_DEBUG("Missing Et...");
+        ATH_CHECK(m_met_selection->LoadContainers());
+        if (isData()) {
+            ATH_MSG_DEBUG("The input is data");
+            return StatusCode::SUCCESS;
+        }
+        ATH_MSG_DEBUG("Truth...");
+        ATH_CHECK(m_truth_selection->LoadContainers());
+        ATH_MSG_DEBUG("Save the xSection...");
+        ATH_CHECK(SaveCrossSection());
+        ATH_MSG_DEBUG("LoadContainers terminated...");
+        return StatusCode::SUCCESS;
+
+    }
+    bool SUSYAnalysisHelper::SUSYdsid(int DSID) const {
+        return DSID >= 370000 && DSID < 405000;
+    }
+    bool SUSYAnalysisHelper::isData() const {
+        return m_systematics->isData();
+    }
+    unsigned int SUSYAnalysisHelper::finalState() {
+        const xAOD::EventInfo* info = m_XAMPPInfo->GetOrigInfo();
+        if (!info->eventType(xAOD::EventInfo::IS_SIMULATION)) {
+            ATH_MSG_WARNING("The current event is no simulated event");
+            return -1;
+        }
+        static XAMPP::Storage<int>* dec_FinalState = m_XAMPPInfo->GetVariableStorage<int>("SUSYFinalState");
+        static XAMPP::Storage<int>* dec_ProcID = m_XAMPPInfo->GetVariableStorage<int>("SUSY_procID");
+        int mc_channel = m_XAMPPInfo->mcChannelNumber();
+        if (!SUSYdsid(mc_channel)) return 0;
+        if (dec_FinalState->isAvailable()) return dec_FinalState->GetValue();
+        if (1 == 2 && dec_ProcID->isAvailable()) return dec_ProcID->GetValue();
+        return m_truth_selection->GetInitialState();
+    }
+    StatusCode SUSYAnalysisHelper::SaveCrossSection() {
+        static XAMPP::Storage<int>* dec_FinalState = m_XAMPPInfo->GetVariableStorage<int>("SUSYFinalState");
+        static XAMPP::Storage<double>* dec_GenW = m_XAMPPInfo->GetVariableStorage<double>("GenWeight");
+
+        ATH_CHECK(dec_FinalState->ConstStore(finalState()));
+        ATH_CHECK(dec_GenW->ConstStore(m_XAMPPInfo->GetGenWeight()));
+        if (m_FillLHEWeights) {
+            for (const auto& LHE : m_LHEWeights) {
+                if (LHE.second->isAvailable()) continue;
+                ATH_CHECK(m_MDTree->fillLHEMetaData(LHE.first));
+                ATH_CHECK(LHE.second->ConstStore(m_XAMPPInfo->GetGenWeight(LHE.first)));
+            }
+        }
+        return StatusCode::SUCCESS;
+    }
+
+    bool SUSYAnalysisHelper::AcceptEvent() {
+        return true;
+    }
+    StatusCode SUSYAnalysisHelper::FillInitialObjects(const CP::SystematicSet* systset) {
+        ATH_MSG_DEBUG("FillInitialObjects...");
+        if (m_systematics->AffectsOnlyMET(systset)) return StatusCode::SUCCESS;
+        ATH_CHECK(m_ParticleConstructor->PrepareContainer(systset));
+        ATH_CHECK(m_electron_selection->InitialFill(*systset));
+        ATH_CHECK(m_muon_selection->InitialFill(*systset));
+        ATH_CHECK(m_jet_selection->InitialFill(*systset));
+        ATH_CHECK(m_photon_selection->InitialFill(*systset));
+        ATH_CHECK(m_tau_selection->InitialFill(*systset));
+        if (doTruth()) ATH_CHECK(m_truth_selection->InitialFill(*systset));
+        return StatusCode::SUCCESS;
+
+    }
+    StatusCode SUSYAnalysisHelper::RemoveOverlap() {
+        ATH_MSG_DEBUG("OverlapRemoval...");
+        if (m_systematics->AffectsOnlyMET(m_systematics->GetCurrent())) return StatusCode::SUCCESS;
+        //This boolean is usally false in case of the TruthAnalysisHelpers
+        if (m_StoreRecoFlags) ATH_CHECK(m_susytools->OverlapRemoval(m_electron_selection->GetPreElectrons(), m_muon_selection->GetPreMuons(), m_jet_selection->GetPreJets(), m_photon_selection->GetPrePhotons(), m_tau_selection->GetPreTaus()));
+//        ATH_CHECK(TruthOverlapRemoval());
+        return StatusCode::SUCCESS;
+    }
+//    StatusCode SUSYAnalysisHelper::TruthOverlapRemoval() {
+//        if (doTruth() && m_systematics->GetCurrent() == m_systematics->GetNominal()) ATH_CHECK(m_truth_selection->PerformOverlapRemoval());
+//        return StatusCode::SUCCESS;
+//    }
+    StatusCode SUSYAnalysisHelper::FillObjects(const CP::SystematicSet* systset) {
+        ATH_MSG_DEBUG("FillObjects...");
+        ATH_CHECK(m_XAMPPInfo->SetSystematic(systset));
+        ATH_MSG_DEBUG("Create new instance of the reconstructed particle container");
+        if (!m_systematics->AffectsOnlyMET(systset)) {
+            ATH_MSG_DEBUG("Fill electrons...");
+            ATH_CHECK(m_electron_selection->FillElectrons(*systset));
+            ATH_MSG_DEBUG("Fill muons...");
+            ATH_CHECK(m_muon_selection->FillMuons(*systset));
+            ATH_MSG_DEBUG("Fill jets...");
+            ATH_CHECK(m_jet_selection->FillJets(*systset));
+            ATH_MSG_DEBUG("Fill taus...");
+            ATH_CHECK(m_tau_selection->FillTaus(*systset));
+            ATH_MSG_DEBUG("Fill photons...");
+            ATH_CHECK(m_photon_selection->FillPhotons(*systset));
+            if (doTruth()) ATH_CHECK(m_truth_selection->FillTruth(*systset));
+            m_triggers->CheckTriggerMatching();
+        } else ATH_CHECK(m_XAMPPInfo->CopyInfoFromNominal(systset));
+        ATH_CHECK(m_met_selection->FillMet(*systset));
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::finalize() {
+        ATH_CHECK(m_MDTree->finalize());
+#ifdef XAOD_STANDALONE
+        m_outFile->cd();
+#endif
+        for (auto& Tree : m_treeVec)
+            ATH_CHECK(Tree.second->FinalizeTree());
+
+        if (m_doTrees) ATH_MSG_INFO("All trees were written successfully.");
+        for (auto& Histo : m_histoVec)
+            Histo.second->FinalizeHistos();
+
+        if (m_doHistos) ATH_MSG_INFO("All histograms were written successfully.");
+
+#ifdef XAOD_STANDALONE
+        m_outFile->cd();
+#endif
+        if (m_doxAODs) {
+            ATH_CHECK(m_OutxAOD->Finalize());
+        }
+#ifdef XAOD_STANDALONE
+        m_outFile->Write("", TObject::kOverwrite);
+        m_outFile->Close();
+        ATH_MSG_INFO("Close the output file");
+        delete m_outFile;
+#endif
+        return StatusCode::SUCCESS;
+    }
+    bool SUSYAnalysisHelper::CleanObjects(const CP::SystematicSet* systset) {
+        ATH_CHECK(m_XAMPPInfo->SetSystematic(systset));
+        ATH_MSG_DEBUG("Found " << m_dec_NumBadMuon->GetValue() << " bad muons, " << m_decNumCosmicMuon->GetValue() << " cosmics and " << m_decNumBadJet->GetValue() << " bad jets");
+        return !((m_CleanBadMuon && m_dec_NumBadMuon->GetValue() > 0) || (m_CleanCosmicMuon && m_decNumCosmicMuon->GetValue() > 0) || (m_CleanBadJet && m_decNumBadJet->GetValue() > 0));
+    }
+    StatusCode SUSYAnalysisHelper::FillEventWeights() {
+        if (m_systematics->AffectsOnlyMET(m_systematics->GetCurrent())) return StatusCode::SUCCESS;
+        ATH_CHECK(m_electron_selection->SaveScaleFactor());
+        ATH_CHECK(m_muon_selection->SaveScaleFactor());
+        ATH_CHECK(m_photon_selection->SaveScaleFactor());
+        ATH_CHECK(m_tau_selection->SaveScaleFactor());
+        ATH_CHECK(m_jet_selection->SaveScaleFactor());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::FillEvent(const CP::SystematicSet* set) {
+        ATH_CHECK(m_XAMPPInfo->SetSystematic(set));
+        ATH_MSG_DEBUG("Fill all the SFs");
+        if (!isData()) ATH_CHECK(FillEventWeights());
+        ATH_MSG_DEBUG("Compute the variables needed for later analysis");
+        ATH_CHECK(ComputeEventVariables());
+        ATH_MSG_DEBUG("Check Dumping cuts");
+        if (!m_config->ApplyCuts(XAMPP::CutKind::Output)) return StatusCode::SUCCESS;
+        ATH_MSG_DEBUG("Dump output");
+        ATH_CHECK(DumpNtuple(set));
+        ATH_CHECK(DumpHistos(set));
+        return StatusCode::SUCCESS;
+    }
+    bool SUSYAnalysisHelper::CheckTrigger() {
+        return m_triggers->CheckTrigger();
+    }
+    bool SUSYAnalysisHelper::EventCleaning() const {
+        return m_XAMPPInfo->PassCleaning();
+    }
+    double SUSYAnalysisHelper::GetMCXsec(unsigned int mc_channel_number, unsigned int finalState) {
+        return m_XsecDB->rawxsect(mc_channel_number, finalState);
+    }
+    double SUSYAnalysisHelper::GetMCFilterEff(unsigned int mc_channel_number, unsigned int finalState) {
+        return m_XsecDB->efficiency(mc_channel_number, finalState);
+    }
+    double SUSYAnalysisHelper::GetMCkFactor(unsigned int mc_channel_number, unsigned int finalState) {
+        return m_XsecDB->kfactor(mc_channel_number, finalState);
+    }
+    double SUSYAnalysisHelper::GetMCXsectTimesEff(unsigned int mc_channel_number, unsigned int finalState) {
+        return m_XsecDB->xsectTimesEff(mc_channel_number, finalState);
+    }
+    StatusCode SUSYAnalysisHelper::DumpNtuple(const CP::SystematicSet * sys) {
+        if (!m_doTrees) return StatusCode::SUCCESS;
+        if (m_treeVec.empty()) return StatusCode::FAILURE;
+        ATH_CHECK(m_treeVec[sys]->FillTree());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::DumpHistos(const CP::SystematicSet * sys) {
+        if (!m_doHistos) return StatusCode::SUCCESS;
+        if (m_histoVec.empty()) return StatusCode::FAILURE;
+        ATH_CHECK(m_histoVec[sys]->FillHistos());
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::CheckCutFlow(const CP::SystematicSet* systset) {
+        if (!m_RunCutFlow) {
+            ATH_MSG_WARNING("Cutflows diabled");
+            return StatusCode::SUCCESS;
+        }
+        ATH_CHECK(m_XAMPPInfo->SetSystematic(systset));
+        m_config->ApplyCuts(XAMPP::CutKind::CutFlowHisto);
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::initializeEventVariables() {
+        //Lets define some variables which we want to store in the output tree / use in the cutflow
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<float>("JetHt"));
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<int>("N_bjets"));
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<int>("N_SignalLeptons", false)); //A variable on which we are cutting does not to be stored in the tree
+        ATH_CHECK(m_XAMPPInfo->NewEventVariable<int>("N_Jets", false)); //A variable on which we are cutting does not to be stored in the tree
+        //You can also create trees using the Particle Storage Variable
+        //The syntax is at follows
+        if (doTruth()) {
+            ATH_CHECK(m_XAMPPInfo->BookParticleStorage("TruthParticles", true, false));
+            //The second and third arguments are optional. The second argument switches whether the mass (true) or the energy(false) of the particles will be saved in the output
+            XAMPP::ParticleStorage* TruthStore = m_XAMPPInfo->GetParticleStorage("TruthParticles");
+            //As for the XAMPP::Storage the third argument determines whether the tree is written for systematics
+            //After you have created the ParticleStorage you can retrieve it in order to save further variables of the particle
+            //Lets save the charge only for the nominal Case
+            ATH_CHECK(TruthStore->SaveFloat("charge"));
+            ATH_CHECK(TruthStore->SaveInteger("pdgId"));
+        }
+
+        ATH_CHECK(m_XAMPPInfo->BookParticleStorage("Elec"));
+
+        XAMPP::ParticleStorage* ElectronStore = m_XAMPPInfo->GetParticleStorage("Elec");
+        ATH_CHECK(ElectronStore->SaveFloat("charge", false));
+        //You can also call SaveInteger SaveChar and SaveDouble to store these data types for a particle
+        ATH_CHECK(m_XAMPPInfo->BookParticleStorage("Muon"));
+        XAMPP::ParticleStorage* MuonStore = m_XAMPPInfo->GetParticleStorage("Muon");
+        ATH_CHECK(MuonStore->SaveFloat("charge", false));
+
+        ATH_CHECK(m_XAMPPInfo->BookParticleStorage("Jet"));
+        
+        //XAMPP::ParticleStorage* CaloSumsStore = m_XAMPPInfo->GetParticleStorage("CaloSums");
+
+        ATH_CHECK(m_XAMPPInfo->BookParticleStorage("RecoCandidates"));
+        XAMPP::ParticleStorage* RecoStore = m_XAMPPInfo->GetParticleStorage("RecoCandidates");
+        ATH_CHECK(RecoStore->SaveFloat("charge"));
+        ATH_CHECK(RecoStore->SaveInteger("pdgId"));
+
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::ComputeEventVariables() {
+
+        //Now we want to save the SignalElectrons in the tree
+        //First lets define the Pointer to the Storage elements
+        static XAMPP::Storage<float>* dec_JetHt = m_XAMPPInfo->GetVariableStorage<float>("JetHt"); //Static avoids that the Storage element is retrieved each function call
+        static XAMPP::Storage<int>* dec_Nbjet = m_XAMPPInfo->GetVariableStorage<int>("N_bjets");
+        static XAMPP::Storage<int>* dec_Nlep = m_XAMPPInfo->GetVariableStorage<int>("N_SignalLeptons");
+        static XAMPP::Storage<int>* dec_Njets = m_XAMPPInfo->GetVariableStorage<int>("N_Jets");
+
+        // Then lets calculate our event variables... there are lots of functions in the AnalysisUtils in order to do that, feel free to add other functions for this purpose
+        int N_Lep = m_electron_selection->GetSignalElectrons()->size() + m_muon_selection->GetSignalMuons()->size();
+        int NJets = m_jet_selection->GetSignalJets()->size();
+        int Nbjets = m_jet_selection->GetBJets()->size();
+        float Ht = XAMPP::CalculateJetHt(m_jet_selection->GetSignalJets());
+        bool RecoPass = true;
+        //This should reconstruct all Z bosons in the event
+        while (RecoPass) {
+            xAOD::Particle* Z = m_ParticleConstructor->CreateEmptyParticle();
+            RecoPass = XAMPP::RecoZfromLeps(m_electron_selection->GetSignalElectrons(), Z);
+            m_ParticleConstructor->WellDefined(Z, RecoPass);
+        }
+        //Finally store the variables they are then used by the Cut Class or just written out into the trees
+        ATH_CHECK(dec_JetHt->Store(Ht));
+        ATH_CHECK(dec_Nbjet->Store(Nbjets));
+        ATH_CHECK(dec_Nlep->Store(N_Lep));
+        ATH_CHECK(dec_Njets->Store(NJets));
+
+        static XAMPP::ParticleStorage* ElectronStore = m_XAMPPInfo->GetParticleStorage("Elec");
+        ATH_CHECK(ElectronStore->Fill(m_electron_selection->GetSignalElectrons()));
+        static XAMPP::ParticleStorage* MuonStore = m_XAMPPInfo->GetParticleStorage("Muon");
+        ATH_CHECK(MuonStore->Fill(m_muon_selection->GetSignalMuons()));
+
+        static XAMPP::ParticleStorage* JetStore = m_XAMPPInfo->GetParticleStorage("Jet");
+        ATH_CHECK(JetStore->Fill(m_jet_selection->GetSignalJets()));
+
+        if (doTruth() && m_XAMPPInfo->GetSystematic() == m_systematics->GetNominal()) {
+            XAMPP::ParticleStorage* TruthStore = m_XAMPPInfo->GetParticleStorage("TruthParticles");
+            ATH_CHECK(TruthStore->Fill(m_truth_selection->GetTruthParticles()));
+        }
+        static XAMPP::ParticleStorage* RecoStore = m_XAMPPInfo->GetParticleStorage("RecoCandidates");
+        ATH_CHECK(RecoStore->Fill(m_ParticleConstructor->GetContainer()));
+
+        return StatusCode::SUCCESS;
+    }
+    StatusCode SUSYAnalysisHelper::DumpCxAOD() {
+        if (!m_doxAODs) return StatusCode::SUCCESS;
+        ATH_CHECK(m_OutxAOD->SaveEvent());
+        return StatusCode::SUCCESS;
+    }
+    TreeBase* SUSYAnalysisHelper::CreateTreeClass(const CP::SystematicSet * set) {
+        TreeBase * mytree = new TreeBase(set);
+        return mytree;
+    }
+    HistoBase* SUSYAnalysisHelper::CreateHistoClass(const CP::SystematicSet * set) {
+        HistoBase * myhisto = new HistoBase(set);
+        return myhisto;
+    }
+    void SUSYAnalysisHelper::DisableRecoFlags() {
+        m_StoreRecoFlags = false;
+    }
+    ST::SUSYObjDef_xAOD* SUSYAnalysisHelper::SUSYToolsPtr() {
+        ST::SUSYObjDef_xAOD* ST = dynamic_cast<ST::SUSYObjDef_xAOD*>(m_susytools.operator->());
+        return ST;
+
+    }
+    bool SUSYAnalysisHelper::doTruth() const {
+        return m_doTruth;
+    }
+}

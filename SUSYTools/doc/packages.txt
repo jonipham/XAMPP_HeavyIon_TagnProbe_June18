@@ -1,0 +1,6 @@
+#for running on Base,2.4.39
+#
+# No packages required against .3you want to run against an earlier release:
+
+# This is needed for new e/gamma recommendations
+atlasoff/PhysicsAnalysis/ElectronPhotonID/ElectronEfficiencyCorrection-00-02-05

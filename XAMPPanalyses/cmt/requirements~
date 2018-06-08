@@ -1,0 +1,55 @@
+package XAMPPanalyses
+use AtlasPolicy                       AtlasPolicy-*  
+use AtlasROOT                         AtlasROOT-*                       External
+use XAMPPbase                         XAMPPbase-*                       
+use AsgTools                          AsgTools-*                        Control/AthToolSupport
+use xAODParticleEvent                 xAODParticleEvent-*               Event/xAOD
+use PileupReweighting                 PileupReweighting-*               PhysicsAnalysis/AnalysisCommon
+use FourMomUtils                      FourMomUtils-*                    Event
+use MCTruthClassifier                 MCTruthClassifier-*               PhysicsAnalysis
+use SUSYTools                         SUSYTools-*                       PhysicsAnalysis/SUSYPhys
+use xAODEventInfo                     xAODEventInfo-*                   Event/xAOD
+use GoodRunsLists                     GoodRunsLists-*                   DataQuality
+use PATInterfaces                     PATInterfaces-*                   PhysicsAnalysis/AnalysisCommon
+use xAODBase                          xAODBase-*                        Event/xAOD
+use xAODCore                          xAODCore-*                        Event/xAOD
+use xAODMuon                          xAODMuon-*                        Event/xAOD
+use xAODEgamma                        xAODEgamma-*                      Event/xAOD
+use xAODJet                           xAODJet-*                         Event/xAOD
+use xAODTau                           xAODTau-*                         Event/xAOD
+use xAODMissingET                     xAODMissingET-*                   Event/xAOD
+use xAODBTagging                      xAODBTagging-*                    Event/xAOD
+use xAODTracking                      xAODTracking-*                    Event/xAOD
+use xAODTruth                         xAODTruth-*                       Event/xAOD
+use xAODTrigMissingET                 xAODTrigMissingET-*               Event/xAOD
+use xAODTrigger                       xAODTrigger-*                     Event/xAOD
+use xAODLuminosity                    xAODLuminosity-*                  Event/xAOD
+use xAODMetaData                      xAODMetaData-*                    Event/xAOD
+use xAODCutFlow                       xAODCutFlow-*                     Event/xAOD
+#use TrigT1Interfaces                 TrigT1Interfaces-*                Trigger/TrigT1        
+
+private
+use JetResolution                     JetResolution-*                   Reconstruction/Jet
+use xAODRootAccess                    xAODRootAccess-*                  Control
+use xAODEventInfo                     xAODEventInfo-*                   Event/xAOD
+use GaudiInterface                    GaudiInterface-*                  External
+use JetRec                            JetRec-*                          Reconstruction/Jet
+use AthenaBaseComps                   AthenaBaseComps-*                 Control
+use IsolationSelection                IsolationSelection-* 				PhysicsAnalysis/AnalysisCommon
+use InDetTrackSelectionTool           InDetTrackSelectionTool-*         InnerDetector/InDetRecTools
+use ElectronEfficiencyCorrection      ElectronEfficiencyCorrection-*    PhysicsAnalysis/ElectronPhotonID
+use PhotonEfficiencyCorrection        PhotonEfficiencyCorrection-*      PhysicsAnalysis/ElectronPhotonID
+use MuonEfficiencyCorrections 	      MuonEfficiencyCorrections-*       PhysicsAnalysis/MuonID/MuonIDAnalysis
+use PhotonEfficiencyCorrection        PhotonEfficiencyCorrection-*      PhysicsAnalysis/ElectronPhotonID
+use PileupReweighting 		          PileupReweighting-*               PhysicsAnalysis/AnalysisCommon
+use TauAnalysisTools 		          TauAnalysisTools-* 				PhysicsAnalysis/TauID
+use HIEventUtils 		          HIEventUtils-* 				PhysicsAnalysis/HeavyIonPhys
+use tauRecTools                       tauRecTools-* 					Reconstruction
+use EventInfo                         EventInfo-*                       Event
+end_private
+
+apply_pattern dual_use_library files="*.cxx ../Root/*.cxx"
+
+apply_pattern declare_joboptions files="*.py"
+apply_pattern declare_python_modules files="*.py"
+apply_pattern declare_calib files="-s=../data *.*"

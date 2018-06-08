@@ -1,0 +1,1 @@
+mc15_13TeV.410082.MadGraphPythia8EvtGen_A14NNPDF23LO_ttgamma_noallhad.merge.DAOD_SUSY2.e4404_a766_a821_r7676_p2879/

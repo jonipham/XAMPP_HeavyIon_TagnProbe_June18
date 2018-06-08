@@ -1,0 +1,163 @@
+#ifndef XAMPPbase_SUSYMuonSelector_H
+#define XAMPPbase_SUSYMuonSelector_H
+
+#include <XAMPPbase/IMuonSelector.h>
+#include <XAMPPbase/SUSYParticleSelector.h>
+
+namespace CP {
+    class IMuonEfficiencyScaleFactors;
+    class IMuonTriggerScaleFactors;
+}
+
+namespace XAMPP {
+    class SUSYMuonTriggerSFHandler;
+    class Cut;
+    struct MuoWeightDecorators {
+            const CP::SystematicSet* Systematic;
+            SG::AuxElement::Decorator<double>* MuoSF;
+            SG::AuxElement::Decorator<double>* MuoSF_Reco;
+            SG::AuxElement::Decorator<double>* MuoSF_TTVA;
+            SG::AuxElement::Decorator<double>* MuoSF_Isol;
+
+            XAMPP::Storage<double>* TotalSF;
+            XAMPP::Storage<double>* TotalSF_Reco;
+            XAMPP::Storage<double>* TotalSF_TTVA;
+            XAMPP::Storage<double>* TotalSF_Isol;
+
+            std::vector<XAMPP::SUSYMuonTriggerSFHandler*> TriggerSFs;
+
+    };
+
+    class SUSYMuonSelector: public SUSYParticleSelector, virtual public IMuonSelector {
+        public:
+            // Create a proper constructor for Athena
+            ASG_TOOL_CLASS(SUSYMuonSelector, XAMPP::IMuonSelector)
+
+            SUSYMuonSelector(std::string myname);
+            virtual ~SUSYMuonSelector();
+
+            virtual StatusCode initialize();
+
+            virtual StatusCode LoadContainers();
+            virtual StatusCode InitialFill(const CP::SystematicSet &systset);
+            virtual StatusCode FillMuons(const CP::SystematicSet &systset);
+            virtual StatusCode LoadSelection(const CP::SystematicSet &systset);
+
+            virtual MuoLink GetLink(const xAOD::Muon &mu) const;
+            virtual MuoLink GetOrigLink(const xAOD::Muon &mu) const;
+
+            virtual const xAOD::MuonContainer* GetMuonContainer() const {
+                return m_xAODMuons;
+            }
+            virtual xAOD::MuonContainer* GetMuons() const {
+                return m_Muons;
+            }
+            virtual xAOD::MuonContainer* GetPreMuons() const {
+                return m_PreMuons;
+            }
+            virtual xAOD::MuonContainer* GetSignalMuons() const {
+                return m_SignalMuons;
+            }
+            virtual xAOD::MuonContainer* GetBaselineMuons() const {
+                return m_BaselineMuons;
+            }
+
+            virtual xAOD::MuonContainer* GetCustomMuons(std::string kind);
+
+            virtual StatusCode SaveScaleFactor();
+        protected:
+            virtual StatusCode CallSUSYTools();
+            StatusCode StoreTruthClassifer(xAOD::Muon & mu) const;
+            StatusCode MuonIDTrack(xAOD::Muon & mu) const;
+            bool IsBadMuon(const xAOD::Muon& mu) const;
+            bool IsCosmicMuon(const xAOD::Muon& mu) const;
+            virtual bool PassBaseline(const xAOD::IParticle &P) const;
+            virtual bool PassSignal(const xAOD::IParticle &P) const;
+
+        private:
+            StatusCode InitTriggerSFDecorators(const std::vector<std::string> &Triggers, std::vector<XAMPP::SUSYMuonTriggerSFHandler*> &Decorators, const CP::SystematicSet* set, XAMPP::Storage<double>* TotSF, unsigned int year);
+            StatusCode SaveMuonSF(const xAOD::Muon& mu, ToolHandle<CP::IMuonEfficiencyScaleFactors> &SFtool, SG::AuxElement::Decorator<double>* SFdecor, double &TotSF, bool doSF = true);
+            void DecorateTotalMuonSF(const xAOD::Muon& mu, const MuoWeightDecorators& Decors) const;
+
+            float m_BaselineD0SigCut;
+            float m_BaselineZ0SinThetaCut;
+
+            float m_SignalD0SigCut;
+            float m_SignalZ0SinThetaCut;
+            bool  m_RequireIsoSignal;
+            
+            float m_MuonIDTrk;
+
+            const xAOD::MuonContainer* m_xAODMuons;
+        protected:
+            xAOD::MuonContainer* m_Muons;
+            xAOD::ShallowAuxContainer* m_MuonsAux;
+
+            xAOD::MuonContainer *m_PreMuons;
+            xAOD::MuonContainer *m_SignalMuons;
+            xAOD::MuonContainer *m_BaselineMuons;
+        private:
+            bool m_SeparateSF;
+            std::vector<MuoWeightDecorators> m_SF;
+            bool m_doRecoSF;
+            bool m_doIsoSF;
+            bool m_doTTVASF;
+            bool m_doTriggerSF;
+
+            std::vector<std::string> m_TriggerExp2015;
+            std::vector<std::string> m_TriggerExp2016;
+#ifdef XAOD_STANDALONE
+            std::string m_TriggerExp2015_str;
+            std::string m_TriggerExp2016_str;
+#endif
+
+            bool m_StoreMultipleTrigSF;
+
+            ToolHandle<CP::IMuonEfficiencyScaleFactors> m_SFtool_Reco;
+            ToolHandle<CP::IMuonEfficiencyScaleFactors> m_SFtool_Iso;
+            ToolHandle<CP::IMuonEfficiencyScaleFactors> m_SFtool_TTVA;
+            ToolHandle<CP::IMuonTriggerScaleFactors> m_SFtool_Trig2015;
+            ToolHandle<CP::IMuonTriggerScaleFactors> m_SFtool_Trig2016;
+
+            XAMPP::Storage<int>* m_NumBadMuons;
+            XAMPP::Storage<int>* m_NumCosmics;
+
+    };
+
+    class SUSYMuonTriggerSFHandler {
+        public:
+            SUSYMuonTriggerSFHandler(const XAMPP::EventInfo* Info, ToolHandle<ST::ISUSYObjDef_xAODTool> ST, const std::string &Trigger, int year, bool UpdateTotal);
+            StatusCode SaveSF(const xAOD::MuonContainer* Muons);
+
+            bool isAvailable();
+            double GetSF();
+            //The TriggerSF tool is only called if the associated trigger actually fired...
+            void ApplyIfTriggerFired(bool B);
+            void DefineTrigger(const std::string &Trigger);
+
+            //Systematics do not affecting the trigger SF are given the nominal tool as reference
+            //This calls the TriggerSFTool once per event and passes it to the TotalSF if necessary
+            bool SetReferenceTool(SUSYMuonTriggerSFHandler* Ref);
+            const std::string& name();
+            int year();
+            StatusCode SetDecorators(XAMPP::Storage<double>* TotalSF, XAMPP::Storage<double>* TriggerSF);
+            ~SUSYMuonTriggerSFHandler();
+        protected:
+            StatusCode CallSFTool(const xAOD::MuonContainer* Muons, bool InternalCall = false);
+            SUSYMuonTriggerSFHandler* m_RefHandler;
+            const XAMPP::EventInfo* m_Info;
+            ToolHandle<ST::ISUSYObjDef_xAODTool> m_SUSYTools;
+            std::string m_SF_string;
+            std::string m_Trigger_string;
+
+            int m_year;
+            bool m_UpdateTotalSF;
+            bool m_DependOnTrigger;
+            Cut* m_Cut;
+            XAMPP::Storage<double>* m_TotalSF;
+            XAMPP::Storage<double>* m_TotalTrigSF;
+
+    };
+}
+
+#endif

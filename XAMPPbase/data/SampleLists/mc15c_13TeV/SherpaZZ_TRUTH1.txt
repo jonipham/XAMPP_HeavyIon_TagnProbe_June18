@@ -1,0 +1,3 @@
+mc15_13TeV.361063.Sherpa_CT10_llll.merge.DAOD_TRUTH1.e3836_p2756/
+#mc15_13TeV.361072.Sherpa_CT10_lllljj_EW6.merge.DAOD_TRUTH1.e3836_p2756/
+mc15_13TeV.361073.Sherpa_CT10_ggllll.merge.DAOD_TRUTH1.e3836_p2756/
